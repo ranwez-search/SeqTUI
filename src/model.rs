@@ -204,6 +204,10 @@ pub enum AppMode {
     Normal,
     /// Command input mode (after pressing ':')
     Command(String),
+    /// Search forward mode (after pressing '/')
+    Search(String),
+    /// Search backward mode (after pressing '?')
+    SearchBackward(String),
 }
 
 /// The complete application state.
@@ -221,6 +225,12 @@ pub struct AppState {
     pub should_quit: bool,
     /// Status message to display
     pub status_message: Option<String>,
+    /// Last search pattern
+    pub last_search: Option<String>,
+    /// Last search direction (true = backward, false = forward)
+    pub last_search_backward: bool,
+    /// Whether to show the help overlay
+    pub show_help: bool,
 }
 
 impl AppState {
@@ -234,6 +244,9 @@ impl AppState {
             mode: AppMode::Normal,
             should_quit: false,
             status_message: warning,
+            last_search: None,
+            last_search_backward: false,
+            show_help: false,
         }
     }
 
@@ -351,6 +364,7 @@ impl AppState {
         if let AppMode::Command(ref cmd) = self.mode.clone() {
             match cmd.as_str() {
                 "q" | "quit" => self.should_quit = true,
+                "h" | "help" => self.show_help(),
                 _ => {
                     // Future: handle :number for column navigation
                     if let Ok(col) = cmd.parse::<usize>() {
@@ -369,9 +383,239 @@ impl AppState {
         self.mode = AppMode::Normal;
     }
 
+    /// Shows help information.
+    fn show_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    /// Toggles help off (for any key press while help is shown).
+    pub fn dismiss_help(&mut self) {
+        self.show_help = false;
+    }
+
     /// Cancels command mode and returns to normal mode.
     pub fn cancel_command(&mut self) {
         self.mode = AppMode::Normal;
+    }
+
+    /// Enters search mode.
+    pub fn enter_search_mode(&mut self, backward: bool) {
+        if backward {
+            self.mode = AppMode::SearchBackward(String::new());
+        } else {
+            self.mode = AppMode::Search(String::new());
+        }
+    }
+
+    /// Handles a character input in search mode.
+    pub fn search_input(&mut self, c: char) {
+        match &mut self.mode {
+            AppMode::Search(ref mut pattern) | AppMode::SearchBackward(ref mut pattern) => {
+                pattern.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles backspace in search mode.
+    pub fn search_backspace(&mut self) {
+        match &mut self.mode {
+            AppMode::Search(ref mut pattern) | AppMode::SearchBackward(ref mut pattern) => {
+                pattern.pop();
+                if pattern.is_empty() {
+                    self.mode = AppMode::Normal;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Executes the current search.
+    pub fn execute_search(&mut self) {
+        let (pattern, backward) = match &self.mode {
+            AppMode::Search(p) => (p.clone(), false),
+            AppMode::SearchBackward(p) => (p.clone(), true),
+            _ => return,
+        };
+
+        if pattern.is_empty() {
+            self.mode = AppMode::Normal;
+            return;
+        }
+
+        self.last_search = Some(pattern.clone());
+        self.last_search_backward = backward;
+        self.mode = AppMode::Normal;
+
+        // Perform the search
+        if backward {
+            self.search_backward(&pattern);
+        } else {
+            self.search_forward(&pattern);
+        }
+    }
+
+    /// Cancels search mode and returns to normal mode.
+    pub fn cancel_search(&mut self) {
+        self.mode = AppMode::Normal;
+    }
+
+    /// Finds the next match (n key).
+    pub fn find_next(&mut self) {
+        if let Some(pattern) = self.last_search.clone() {
+            if self.last_search_backward {
+                self.search_backward(&pattern);
+            } else {
+                self.search_forward(&pattern);
+            }
+        } else {
+            self.status_message = Some("No previous search pattern".to_string());
+        }
+    }
+
+    /// Finds the previous match (N key).
+    pub fn find_previous(&mut self) {
+        if let Some(pattern) = self.last_search.clone() {
+            // Reverse the direction
+            if self.last_search_backward {
+                self.search_forward(&pattern);
+            } else {
+                self.search_backward(&pattern);
+            }
+        } else {
+            self.status_message = Some("No previous search pattern".to_string());
+        }
+    }
+
+    /// Searches forward from current position (right then down).
+    /// Searches both sequence data and sequence names.
+    fn search_forward(&mut self, pattern: &str) {
+        let pattern_upper = pattern.to_uppercase();
+        let start_row = self.cursor.row;
+        let start_col = self.cursor.col;
+        let num_rows = self.alignment.sequence_count();
+        let num_cols = self.alignment.alignment_length();
+
+        if num_rows == 0 || num_cols == 0 {
+            self.status_message = Some(format!("Pattern not found: {}", pattern));
+            return;
+        }
+
+        // Search from current position to end of current row (sequence data only)
+        if let Some(seq) = self.alignment.get(start_row) {
+            let search_start = start_col + 1; // Start after current position
+            if search_start < seq.data.len() {
+                if let Some(pos) = seq.data[search_start..].to_uppercase().find(&pattern_upper) {
+                    self.cursor.col = search_start + pos;
+                    self.ensure_cursor_visible();
+                    self.status_message = Some(format!("/{}", pattern));
+                    return;
+                }
+            }
+        }
+
+        // Search remaining rows (name first, then data)
+        for row_offset in 1..=num_rows {
+            let row = (start_row + row_offset) % num_rows;
+            if let Some(seq) = self.alignment.get(row) {
+                // First check sequence name
+                if seq.id.to_uppercase().contains(&pattern_upper) {
+                    self.cursor.row = row;
+                    self.cursor.col = 0; // Position at start when matching name
+                    self.ensure_cursor_visible();
+                    let wrapped = row < start_row || (row == start_row);
+                    if wrapped {
+                        self.status_message = Some(format!("/{} (name, wrapped)", pattern));
+                    } else {
+                        self.status_message = Some(format!("/{} (name)", pattern));
+                    }
+                    return;
+                }
+                // Then check sequence data
+                if let Some(pos) = seq.data.to_uppercase().find(&pattern_upper) {
+                    self.cursor.row = row;
+                    self.cursor.col = pos;
+                    self.ensure_cursor_visible();
+                    if row < start_row || (row == start_row && pos <= start_col) {
+                        self.status_message = Some(format!("/{} (wrapped)", pattern));
+                    } else {
+                        self.status_message = Some(format!("/{}", pattern));
+                    }
+                    return;
+                }
+            }
+        }
+
+        self.status_message = Some(format!("Pattern not found: {}", pattern));
+    }
+
+    /// Searches backward from current position (left then up).
+    /// Searches both sequence data and sequence names.
+    fn search_backward(&mut self, pattern: &str) {
+        let pattern_upper = pattern.to_uppercase();
+        let start_row = self.cursor.row;
+        let start_col = self.cursor.col;
+        let num_rows = self.alignment.sequence_count();
+        let num_cols = self.alignment.alignment_length();
+
+        if num_rows == 0 || num_cols == 0 {
+            self.status_message = Some(format!("Pattern not found: {}", pattern));
+            return;
+        }
+
+        // Search from current position backward in current row (data only)
+        if let Some(seq) = self.alignment.get(start_row) {
+            if start_col > 0 {
+                let search_area = &seq.data[..start_col];
+                if let Some(pos) = search_area.to_uppercase().rfind(&pattern_upper) {
+                    self.cursor.col = pos;
+                    self.ensure_cursor_visible();
+                    self.status_message = Some(format!("?{}", pattern));
+                    return;
+                }
+            }
+            // Check current row's name if we're past position 0
+            if start_col > 0 && seq.id.to_uppercase().contains(&pattern_upper) {
+                self.cursor.col = 0;
+                self.ensure_cursor_visible();
+                self.status_message = Some(format!("?{} (name)", pattern));
+                return;
+            }
+        }
+
+        // Search previous rows (data first from end, then name)
+        for row_offset in 1..=num_rows {
+            let row = (start_row + num_rows - row_offset) % num_rows;
+            if let Some(seq) = self.alignment.get(row) {
+                // First check sequence data (from end)
+                if let Some(pos) = seq.data.to_uppercase().rfind(&pattern_upper) {
+                    self.cursor.row = row;
+                    self.cursor.col = pos;
+                    self.ensure_cursor_visible();
+                    if row > start_row || (row == start_row && pos >= start_col) {
+                        self.status_message = Some(format!("?{} (wrapped)", pattern));
+                    } else {
+                        self.status_message = Some(format!("?{}", pattern));
+                    }
+                    return;
+                }
+                // Then check sequence name
+                if seq.id.to_uppercase().contains(&pattern_upper) {
+                    self.cursor.row = row;
+                    self.cursor.col = 0;
+                    self.ensure_cursor_visible();
+                    let wrapped = row > start_row || (row == start_row);
+                    if wrapped {
+                        self.status_message = Some(format!("?{} (name, wrapped)", pattern));
+                    } else {
+                        self.status_message = Some(format!("?{} (name)", pattern));
+                    }
+                    return;
+                }
+            }
+        }
+
+        self.status_message = Some(format!("Pattern not found: {}", pattern));
     }
 }
 
@@ -461,5 +705,231 @@ mod tests {
         assert_eq!(state.cursor.row, 0);
         state.move_left();
         assert_eq!(state.cursor.col, 0);
+    }
+
+    #[test]
+    fn test_help_command() {
+        let seqs = vec![Sequence::new("seq1", "ACGT")];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+
+        // Initially help is not shown
+        assert!(!state.show_help);
+
+        // Enter command mode and type 'h'
+        state.enter_command_mode();
+        state.command_input('h');
+        state.execute_command();
+
+        // Should toggle help overlay on
+        assert!(state.show_help);
+
+        // Mode should return to normal
+        assert_eq!(state.mode, AppMode::Normal);
+
+        // Dismiss help
+        state.dismiss_help();
+        assert!(!state.show_help);
+    }
+
+    #[test]
+    fn test_search_forward() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+            Sequence::new("seq2", "TGCATGCA"),
+            Sequence::new("seq3", "AAAAGAAA"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(3, 8);
+
+        // Search for "TGC" starting from (0,0)
+        state.enter_search_mode(false);
+        state.search_input('T');
+        state.search_input('G');
+        state.search_input('C');
+        state.execute_search();
+
+        // Should find in second row
+        assert_eq!(state.cursor.row, 1);
+        assert_eq!(state.cursor.col, 0);
+
+        // Search for "GAA" - should find in third row
+        state.enter_search_mode(false);
+        state.search_input('G');
+        state.search_input('A');
+        state.search_input('A');
+        state.execute_search();
+
+        assert_eq!(state.cursor.row, 2);
+        assert_eq!(state.cursor.col, 4);
+    }
+
+    #[test]
+    fn test_search_backward() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+            Sequence::new("seq2", "TGCATGCA"),
+            Sequence::new("seq3", "AAAAGAAA"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(3, 8);
+
+        // Move to last row, last column
+        state.cursor.row = 2;
+        state.cursor.col = 7;
+
+        // Search backward for "TGC"
+        state.enter_search_mode(true);
+        state.search_input('T');
+        state.search_input('G');
+        state.search_input('C');
+        state.execute_search();
+
+        // Should find last occurrence in second row (at position 4)
+        assert_eq!(state.cursor.row, 1);
+        assert_eq!(state.cursor.col, 4);
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+            Sequence::new("seq2", "tgcatgca"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(2, 8);
+
+        // Search for lowercase pattern in uppercase sequence
+        state.enter_search_mode(false);
+        state.search_input('c');
+        state.search_input('g');
+        state.search_input('t');
+        state.execute_search();
+
+        assert_eq!(state.cursor.row, 0);
+        assert_eq!(state.cursor.col, 1);
+    }
+
+    #[test]
+    fn test_find_next_and_previous() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+            Sequence::new("seq2", "ACGTACGT"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(2, 8);
+
+        // Search for "CGT"
+        state.enter_search_mode(false);
+        state.search_input('C');
+        state.search_input('G');
+        state.search_input('T');
+        state.execute_search();
+
+        // First match at (0, 1)
+        assert_eq!(state.cursor.row, 0);
+        assert_eq!(state.cursor.col, 1);
+
+        // Find next - should find at (0, 5)
+        state.find_next();
+        assert_eq!(state.cursor.row, 0);
+        assert_eq!(state.cursor.col, 5);
+
+        // Find next - should find in second row at (1, 1)
+        state.find_next();
+        assert_eq!(state.cursor.row, 1);
+        assert_eq!(state.cursor.col, 1);
+
+        // Find previous - should go back to (0, 5)
+        state.find_previous();
+        assert_eq!(state.cursor.row, 0);
+        assert_eq!(state.cursor.col, 5);
+    }
+
+    #[test]
+    fn test_search_not_found() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(1, 8);
+
+        state.enter_search_mode(false);
+        state.search_input('X');
+        state.search_input('Y');
+        state.search_input('Z');
+        state.execute_search();
+
+        // Cursor should not move
+        assert_eq!(state.cursor.row, 0);
+        assert_eq!(state.cursor.col, 0);
+        assert!(state.status_message.as_ref().unwrap().contains("not found"));
+    }
+
+    #[test]
+    fn test_search_by_sequence_name() {
+        let seqs = vec![
+            Sequence::new("Human_BRCA1", "ACGTACGT"),
+            Sequence::new("Mouse_BRCA1", "TGCATGCA"),
+            Sequence::new("Chicken_BRCA2", "AAAAGAAA"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(3, 8);
+
+        // Search for "Mouse" - should find by sequence name
+        state.enter_search_mode(false);
+        state.search_input('M');
+        state.search_input('o');
+        state.search_input('u');
+        state.search_input('s');
+        state.search_input('e');
+        state.execute_search();
+
+        assert_eq!(state.cursor.row, 1);
+        assert_eq!(state.cursor.col, 0);
+        assert!(state.status_message.as_ref().unwrap().contains("name"));
+
+        // Search for "BRCA2" - should find Chicken sequence
+        state.enter_search_mode(false);
+        state.search_input('B');
+        state.search_input('R');
+        state.search_input('C');
+        state.search_input('A');
+        state.search_input('2');
+        state.execute_search();
+
+        assert_eq!(state.cursor.row, 2);
+        assert_eq!(state.cursor.col, 0);
+        assert!(state.status_message.as_ref().unwrap().contains("name"));
+    }
+
+    #[test]
+    fn test_search_name_case_insensitive() {
+        let seqs = vec![
+            Sequence::new("Human_Gene", "ACGTACGT"),
+            Sequence::new("mouse_gene", "TGCATGCA"),
+        ];
+        let alignment = Alignment::new(seqs);
+        let mut state = AppState::new(alignment);
+        state.update_viewport_size(2, 8);
+
+        // Search for lowercase "human" should match "Human_Gene"
+        state.enter_search_mode(false);
+        state.search_input('h');
+        state.search_input('u');
+        state.search_input('m');
+        state.search_input('a');
+        state.search_input('n');
+        state.execute_search();
+
+        // Should wrap around and find Human (row 0)
+        assert_eq!(state.cursor.row, 0);
+        assert!(state.status_message.as_ref().unwrap().contains("name"));
     }
 }

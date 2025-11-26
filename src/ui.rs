@@ -4,7 +4,8 @@
 //! - Layout with sticky sequence names on the left
 //! - Colored nucleotide/amino acid display
 //! - Status bar with position and mode info
-//! - Command line display
+//! - Hint bar with basic commands
+//! - Help overlay popup
 //!
 //! The design supports future extensions like:
 //! - Amino acid color schemes
@@ -15,7 +16,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -27,6 +28,8 @@ const NAME_PANEL_WIDTH: u16 = 20;
 const MIN_SEQ_PANEL_WIDTH: u16 = 10;
 /// Height of the status bar.
 const STATUS_BAR_HEIGHT: u16 = 1;
+/// Height of the hint bar.
+const HINT_BAR_HEIGHT: u16 = 1;
 
 /// Color scheme for nucleotides.
 ///
@@ -79,17 +82,19 @@ impl ColorScheme for AminoAcidColorScheme {
 pub fn render(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
 
-    // Main layout: content area + status bar
+    // Main layout: content area + status bar + hint bar
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(3),
             Constraint::Length(STATUS_BAR_HEIGHT),
+            Constraint::Length(HINT_BAR_HEIGHT),
         ])
         .split(area);
 
     let content_area = main_layout[0];
     let status_area = main_layout[1];
+    let hint_area = main_layout[2];
 
     // Split content area: names panel (left) + sequence panel (right)
     let content_layout = Layout::default()
@@ -115,6 +120,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_names_panel(frame, state, names_area, visible_rows);
     render_sequences_panel(frame, state, sequences_area, visible_rows, visible_cols);
     render_status_bar(frame, state, status_area);
+    render_hint_bar(frame, hint_area);
+
+    // Render help overlay if active
+    if state.show_help {
+        render_help_overlay(frame, area);
+    }
 }
 
 /// Renders the sequence names panel (sticky, always visible).
@@ -222,6 +233,8 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     let (mode_str, command_str) = match &state.mode {
         AppMode::Normal => ("NORMAL", String::new()),
         AppMode::Command(cmd) => ("COMMAND", format!(":{}", cmd)),
+        AppMode::Search(pattern) => ("SEARCH", format!("/{}", pattern)),
+        AppMode::SearchBackward(pattern) => ("SEARCH", format!("?{}", pattern)),
     };
 
     let position_info = format!(
@@ -264,11 +277,75 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Renders the hint bar at the very bottom with basic commands.
+fn render_hint_bar(frame: &mut Frame, area: Rect) {
+    let hints = vec![
+        Span::styled(" :q ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" quit ", Style::default().fg(Color::Gray)),
+        Span::styled(" :h ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" help ", Style::default().fg(Color::Gray)),
+        Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" search ", Style::default().fg(Color::Gray)),
+        Span::styled(" h/j/k/l ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" navigate ", Style::default().fg(Color::Gray)),
+    ];
+
+    let hint_line = Line::from(hints);
+    let paragraph = Paragraph::new(hint_line);
+    frame.render_widget(paragraph, area);
+}
+
+/// Renders a centered help overlay popup.
+fn render_help_overlay(frame: &mut Frame, area: Rect) {
+    // Calculate centered popup dimensions
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = 16.min(area.height.saturating_sub(4));
+    
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    // Help content
+    let help_lines = vec![
+        Line::from(Span::styled("NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  h / ←      Move left"),
+        Line::from("  l / →      Move right"),
+        Line::from("  k / ↑      Move up"),
+        Line::from("  j / ↓      Move down"),
+        Line::from(""),
+        Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  /pattern   Search forward (in names & sequences)"),
+        Line::from("  ?pattern   Search backward"),
+        Line::from("  n          Find next match"),
+        Line::from("  N          Find previous match"),
+        Line::from(""),
+        Line::from(Span::styled("COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from("  :q         Quit"),
+        Line::from("  :h         Toggle this help"),
+        Line::from("  :<number>  Go to column"),
+        Line::from(""),
+        Line::from(Span::styled("Press any key to close", Style::default().fg(Color::DarkGray))),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Help ")
+        .title_style(Style::default().add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(help_lines).block(block);
+    frame.render_widget(paragraph, popup_area);
+}
+
 /// Calculates the visible dimensions for the sequence panel.
 pub fn calculate_visible_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
-    // Account for borders and status bar
+    // Account for borders, status bar, and hint bar
     let visible_cols = (terminal_width.saturating_sub(NAME_PANEL_WIDTH + 4)) as usize;
-    let visible_rows = (terminal_height.saturating_sub(STATUS_BAR_HEIGHT + 2)) as usize;
+    let visible_rows = (terminal_height.saturating_sub(STATUS_BAR_HEIGHT + HINT_BAR_HEIGHT + 2)) as usize;
     (visible_rows, visible_cols)
 }
 
@@ -292,8 +369,8 @@ mod tests {
     fn test_visible_dimensions() {
         let (rows, cols) = calculate_visible_dimensions(100, 50);
         // 100 - 20 (name panel) - 4 (borders) = 76 cols
-        // 50 - 1 (status) - 2 (borders) = 47 rows
+        // 50 - 1 (status) - 1 (hint) - 2 (borders) = 46 rows
         assert_eq!(cols, 76);
-        assert_eq!(rows, 47);
+        assert_eq!(rows, 46);
     }
 }

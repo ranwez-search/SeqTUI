@@ -6,10 +6,15 @@
 //! - `k`: move up
 //! - `l`: move right
 //! - `:`: enter command mode
-//! - `q` in command mode: quit
+//!   - `:q` or `:quit`: quit the application
+//!   - `:h` or `:help`: show help
+//!   - `:<number>`: go to column
+//! - `/`: search forward
+//! - `?`: search backward
+//! - `n`: find next match
+//! - `N`: find previous match
 //!
 //! The design supports future extensions like:
-//! - `/` for pattern search
 //! - `g` for go-to commands
 //! - Number prefixes for repeated movements
 
@@ -45,6 +50,24 @@ pub enum Action {
     CommandBackspace,
     /// Resize event (terminal resized)
     Resize(u16, u16),
+    /// Enter search mode (forward with /)
+    EnterSearchMode,
+    /// Enter search mode (backward with ?)
+    EnterSearchBackward,
+    /// Add character to search buffer
+    SearchChar(char),
+    /// Execute search
+    ExecuteSearch,
+    /// Cancel search mode
+    CancelSearch,
+    /// Backspace in search mode
+    SearchBackspace,
+    /// Find next match (n)
+    FindNext,
+    /// Find previous match (N)
+    FindPrevious,
+    /// Dismiss the help overlay
+    DismissHelp,
 }
 
 /// Polls for keyboard events with a timeout.
@@ -59,19 +82,25 @@ pub fn poll_event(timeout: Duration) -> Option<Event> {
 }
 
 /// Converts a crossterm event to an Action based on current app mode.
-pub fn handle_event(event: Event, mode: &AppMode) -> Action {
+pub fn handle_event(event: Event, mode: &AppMode, show_help: bool) -> Action {
     match event {
-        Event::Key(key_event) => handle_key_event(key_event, mode),
+        Event::Key(key_event) => handle_key_event(key_event, mode, show_help),
         Event::Resize(width, height) => Action::Resize(width, height),
         _ => Action::None,
     }
 }
 
 /// Handles a key event based on the current application mode.
-fn handle_key_event(key: KeyEvent, mode: &AppMode) -> Action {
+fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool) -> Action {
+    // If help is shown, any key dismisses it
+    if show_help {
+        return Action::DismissHelp;
+    }
+
     match mode {
         AppMode::Normal => handle_normal_mode(key),
         AppMode::Command(_) => handle_command_mode(key),
+        AppMode::Search(_) | AppMode::SearchBackward(_) => handle_search_mode(key),
     }
 }
 
@@ -98,6 +127,12 @@ fn handle_normal_mode(key: KeyEvent) -> Action {
         // Command mode
         KeyCode::Char(':') => Action::EnterCommandMode,
 
+        // Search mode (Vim-style)
+        KeyCode::Char('/') => Action::EnterSearchMode,
+        KeyCode::Char('?') => Action::EnterSearchBackward,
+        KeyCode::Char('n') => Action::FindNext,
+        KeyCode::Char('N') => Action::FindPrevious,
+
         // Quick quit with 'q' in normal mode (optional convenience)
         // Commented out to strictly follow spec (use :q)
         // KeyCode::Char('q') => Action::Quit,
@@ -113,6 +148,17 @@ fn handle_command_mode(key: KeyEvent) -> Action {
         KeyCode::Esc => Action::CancelCommand,
         KeyCode::Backspace => Action::CommandBackspace,
         KeyCode::Char(c) => Action::CommandChar(c),
+        _ => Action::None,
+    }
+}
+
+/// Handles key events in search mode.
+fn handle_search_mode(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Enter => Action::ExecuteSearch,
+        KeyCode::Esc => Action::CancelSearch,
+        KeyCode::Backspace => Action::SearchBackspace,
+        KeyCode::Char(c) => Action::SearchChar(c),
         _ => Action::None,
     }
 }
@@ -156,6 +202,33 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
         Action::Resize(_, _) => {
             // Resize is handled in the main loop with actual terminal dimensions
         }
+        Action::EnterSearchMode => {
+            state.enter_search_mode(false);
+        }
+        Action::EnterSearchBackward => {
+            state.enter_search_mode(true);
+        }
+        Action::SearchChar(c) => {
+            state.search_input(c);
+        }
+        Action::ExecuteSearch => {
+            state.execute_search();
+        }
+        Action::CancelSearch => {
+            state.cancel_search();
+        }
+        Action::SearchBackspace => {
+            state.search_backspace();
+        }
+        Action::FindNext => {
+            state.find_next();
+        }
+        Action::FindPrevious => {
+            state.find_previous();
+        }
+        Action::DismissHelp => {
+            state.dismiss_help();
+        }
     }
 
     !state.should_quit
@@ -171,23 +244,23 @@ mod tests {
 
         // Test movement keys (Vim-style: h=left, j=down, k=up, l=right)
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::MoveLeft);
+        assert_eq!(handle_key_event(key, &mode, false), Action::MoveLeft);
 
         let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::MoveDown);
+        assert_eq!(handle_key_event(key, &mode, false), Action::MoveDown);
 
         let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::MoveUp);
+        assert_eq!(handle_key_event(key, &mode, false), Action::MoveUp);
 
         let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::MoveRight);
+        assert_eq!(handle_key_event(key, &mode, false), Action::MoveRight);
     }
 
     #[test]
     fn test_enter_command_mode() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::EnterCommandMode);
+        assert_eq!(handle_key_event(key, &mode, false), Action::EnterCommandMode);
     }
 
     #[test]
@@ -195,19 +268,66 @@ mod tests {
         let mode = AppMode::Command(String::new());
 
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::CommandChar('q'));
+        assert_eq!(handle_key_event(key, &mode, false), Action::CommandChar('q'));
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::ExecuteCommand);
+        assert_eq!(handle_key_event(key, &mode, false), Action::ExecuteCommand);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode), Action::CancelCommand);
+        assert_eq!(handle_key_event(key, &mode, false), Action::CancelCommand);
     }
 
     #[test]
     fn test_ctrl_c_quit() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(handle_key_event(key, &mode), Action::Quit);
+        assert_eq!(handle_key_event(key, &mode, false), Action::Quit);
+    }
+
+    #[test]
+    fn test_search_mode_keys() {
+        let mode = AppMode::Normal;
+
+        // Test entering search modes
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::EnterSearchMode);
+
+        let key = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::EnterSearchBackward);
+
+        // Test find next/previous
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::FindNext);
+
+        let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::FindPrevious);
+    }
+
+    #[test]
+    fn test_search_mode_input() {
+        let mode = AppMode::Search(String::new());
+
+        let key = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::SearchChar('A'));
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::ExecuteSearch);
+
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::CancelSearch);
+
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false), Action::SearchBackspace);
+    }
+
+    #[test]
+    fn test_dismiss_help() {
+        let mode = AppMode::Normal;
+        // Any key when help is shown should dismiss help
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, true), Action::DismissHelp);
+
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, true), Action::DismissHelp);
     }
 }
