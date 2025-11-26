@@ -39,8 +39,12 @@ impl Sequence {
     }
 
     /// Gets a character at a specific position.
+    /// 
+    /// This uses byte indexing for O(1) performance, which is safe for
+    /// DNA/amino acid sequences that are always ASCII.
     pub fn char_at(&self, pos: usize) -> Option<char> {
-        self.data.chars().nth(pos)
+        // Use byte indexing for O(1) access - safe for ASCII sequences
+        self.data.as_bytes().get(pos).map(|&b| b as char)
     }
 
     /// Gets a slice of the sequence data.
@@ -231,6 +235,10 @@ pub struct AppState {
     pub last_search_backward: bool,
     /// Whether to show the help overlay
     pub show_help: bool,
+    /// Pending 'g' key for g-commands
+    pub pending_g: bool,
+    /// Number buffer for <number>| command
+    pub number_buffer: String,
 }
 
 impl AppState {
@@ -247,6 +255,8 @@ impl AppState {
             last_search: None,
             last_search_backward: false,
             show_help: false,
+            pending_g: false,
+            number_buffer: String::new(),
         }
     }
 
@@ -391,6 +401,93 @@ impl AppState {
     /// Toggles help off (for any key press while help is shown).
     pub fn dismiss_help(&mut self) {
         self.show_help = false;
+    }
+
+    /// Clears any pending key state.
+    fn clear_pending(&mut self) {
+        self.pending_g = false;
+        self.number_buffer.clear();
+    }
+
+    /// Sets the pending 'g' state for g-commands.
+    pub fn set_pending_g(&mut self) {
+        self.pending_g = true;
+        self.number_buffer.clear();
+    }
+
+    /// Accumulates a digit for the number prefix.
+    pub fn accumulate_digit(&mut self, c: char) {
+        self.pending_g = false;
+        self.number_buffer.push(c);
+    }
+
+    /// Executes goto column with the accumulated number.
+    pub fn execute_goto_column(&mut self) {
+        if let Ok(col) = self.number_buffer.parse::<usize>() {
+            self.goto_column(col);
+        }
+        self.clear_pending();
+    }
+
+    /// Goes to the first column (0).
+    pub fn goto_first_column(&mut self) {
+        self.clear_pending();
+        self.cursor.col = 0;
+        self.ensure_cursor_visible();
+    }
+
+    /// Goes to the last column (end of alignment).
+    pub fn goto_last_column(&mut self) {
+        self.clear_pending();
+        if self.alignment.alignment_length() > 0 {
+            self.cursor.col = self.alignment.alignment_length() - 1;
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Goes to the first visible column (g0).
+    pub fn goto_first_visible_column(&mut self) {
+        self.clear_pending();
+        self.cursor.col = self.viewport.first_col;
+    }
+
+    /// Goes to the middle of the visible area (gm).
+    pub fn goto_middle_visible_column(&mut self) {
+        self.clear_pending();
+        let middle = self.viewport.first_col + self.viewport.visible_cols / 2;
+        self.cursor.col = middle.min(self.alignment.alignment_length().saturating_sub(1));
+    }
+
+    /// Goes to the last visible column (g$).
+    pub fn goto_last_visible_column(&mut self) {
+        self.clear_pending();
+        let last_visible = self.viewport.first_col + self.viewport.visible_cols.saturating_sub(1);
+        self.cursor.col = last_visible.min(self.alignment.alignment_length().saturating_sub(1));
+    }
+
+    /// Goes to a specific column (1-indexed for user).
+    pub fn goto_column(&mut self, col: usize) {
+        self.clear_pending();
+        if col > 0 && col <= self.alignment.alignment_length() {
+            self.cursor.col = col - 1; // 1-indexed for user
+            self.ensure_cursor_visible();
+        } else if col == 0 {
+            self.cursor.col = 0;
+            self.ensure_cursor_visible();
+        } else {
+            self.status_message = Some(format!("Invalid column: {}", col));
+        }
+    }
+
+    /// Handles a g-command key.
+    pub fn handle_g_command(&mut self, c: char) {
+        self.pending_g = false;
+        match c {
+            '0' => self.goto_first_visible_column(),
+            'm' => self.goto_middle_visible_column(),
+            '$' => self.goto_last_visible_column(),
+            _ => {} // Unknown g-command, ignore
+        }
     }
 
     /// Cancels command mode and returns to normal mode.

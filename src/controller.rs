@@ -64,7 +64,8 @@ impl App {
 
             // Handle events
             if let Some(event) = poll_event(self.tick_rate) {
-                let action = handle_event(event, &self.state.mode, self.state.show_help);
+                let has_number_prefix = !self.state.number_buffer.is_empty();
+                let action = handle_event(event, &self.state.mode, self.state.show_help, self.state.pending_g, has_number_prefix);
 
                 // Handle resize specially to update viewport
                 if let crate::event::Action::Resize(_, _) = action {

@@ -5,6 +5,12 @@
 //! - `j`: move down
 //! - `k`: move up
 //! - `l`: move right
+//! - `0` or `Home`: go to first column
+//! - `$` or `End`: go to last column
+//! - `g0`: go to first visible column
+//! - `gm`: go to middle of visible area
+//! - `g$`: go to last visible column
+//! - `<number>|`: go to column (e.g., `50|` goes to column 50)
 //! - `:`: enter command mode
 //!   - `:q` or `:quit`: quit the application
 //!   - `:h` or `:help`: show help
@@ -13,10 +19,6 @@
 //! - `?`: search backward
 //! - `n`: find next match
 //! - `N`: find previous match
-//!
-//! The design supports future extensions like:
-//! - `g` for go-to commands
-//! - Number prefixes for repeated movements
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
@@ -68,6 +70,24 @@ pub enum Action {
     FindPrevious,
     /// Dismiss the help overlay
     DismissHelp,
+    /// Go to first column (0 or Home)
+    GotoFirstColumn,
+    /// Go to last column ($ or End)
+    GotoLastColumn,
+    /// Go to first visible column (g0)
+    GotoFirstVisibleColumn,
+    /// Go to middle of visible area (gm)
+    GotoMiddleVisibleColumn,
+    /// Go to last visible column (g$)
+    GotoLastVisibleColumn,
+    /// Go to specific column (number|)
+    GotoColumn(usize),
+    /// Pending 'g' key for g-commands
+    PendingG,
+    /// Accumulate a digit for number prefix
+    AccumulateDigit(char),
+    /// Execute pending number with | (go to column)
+    ExecuteGotoColumn,
 }
 
 /// Polls for keyboard events with a timeout.
@@ -82,30 +102,46 @@ pub fn poll_event(timeout: Duration) -> Option<Event> {
 }
 
 /// Converts a crossterm event to an Action based on current app mode.
-pub fn handle_event(event: Event, mode: &AppMode, show_help: bool) -> Action {
+pub fn handle_event(event: Event, mode: &AppMode, show_help: bool, pending_g: bool, has_number_prefix: bool) -> Action {
     match event {
-        Event::Key(key_event) => handle_key_event(key_event, mode, show_help),
+        Event::Key(key_event) => handle_key_event(key_event, mode, show_help, pending_g, has_number_prefix),
         Event::Resize(width, height) => Action::Resize(width, height),
         _ => Action::None,
     }
 }
 
 /// Handles a key event based on the current application mode.
-fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool) -> Action {
+fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool, pending_g: bool, has_number_prefix: bool) -> Action {
     // If help is shown, any key dismisses it
     if show_help {
         return Action::DismissHelp;
     }
 
+    // Handle pending g-command
+    if pending_g {
+        return handle_g_command(key);
+    }
+
     match mode {
-        AppMode::Normal => handle_normal_mode(key),
+        AppMode::Normal => handle_normal_mode(key, has_number_prefix),
         AppMode::Command(_) => handle_command_mode(key),
         AppMode::Search(_) | AppMode::SearchBackward(_) => handle_search_mode(key),
     }
 }
 
+/// Handles g-prefix commands (g0, gm, g$).
+fn handle_g_command(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('0') => Action::GotoFirstVisibleColumn,
+        KeyCode::Char('m') => Action::GotoMiddleVisibleColumn,
+        KeyCode::Char('$') => Action::GotoLastVisibleColumn,
+        KeyCode::Char('g') => Action::GotoFirstColumn, // gg goes to first column (like Vim's gg)
+        _ => Action::None, // Unknown g-command, cancel
+    }
+}
+
 /// Handles key events in normal mode (Vim-style navigation).
-fn handle_normal_mode(key: KeyEvent) -> Action {
+fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
     // Handle Ctrl+C for emergency quit
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Action::Quit;
@@ -123,6 +159,21 @@ fn handle_normal_mode(key: KeyEvent) -> Action {
         KeyCode::Down => Action::MoveDown,
         KeyCode::Right => Action::MoveRight,
         KeyCode::Left => Action::MoveLeft,
+
+        // Jump to start/end of line (Vim-style)
+        // '0' goes to first column only if not accumulating a number (e.g., 500|)
+        KeyCode::Char('0') if !has_number_prefix => Action::GotoFirstColumn,
+        KeyCode::Char('0') => Action::AccumulateDigit('0'),
+        KeyCode::Char('$') => Action::GotoLastColumn,
+        KeyCode::Home => Action::GotoFirstColumn,
+        KeyCode::End => Action::GotoLastColumn,
+
+        // g-prefix commands (handled via pending state)
+        KeyCode::Char('g') => Action::PendingG,
+
+        // Number prefix for <number>| command
+        KeyCode::Char(c @ '1'..='9') => Action::AccumulateDigit(c),
+        KeyCode::Char('|') => Action::ExecuteGotoColumn,
 
         // Command mode
         KeyCode::Char(':') => Action::EnterCommandMode,
@@ -229,6 +280,33 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
         Action::DismissHelp => {
             state.dismiss_help();
         }
+        Action::GotoFirstColumn => {
+            state.goto_first_column();
+        }
+        Action::GotoLastColumn => {
+            state.goto_last_column();
+        }
+        Action::GotoFirstVisibleColumn => {
+            state.goto_first_visible_column();
+        }
+        Action::GotoMiddleVisibleColumn => {
+            state.goto_middle_visible_column();
+        }
+        Action::GotoLastVisibleColumn => {
+            state.goto_last_visible_column();
+        }
+        Action::GotoColumn(col) => {
+            state.goto_column(col);
+        }
+        Action::PendingG => {
+            state.set_pending_g();
+        }
+        Action::AccumulateDigit(c) => {
+            state.accumulate_digit(c);
+        }
+        Action::ExecuteGotoColumn => {
+            state.execute_goto_column();
+        }
     }
 
     !state.should_quit
@@ -244,23 +322,23 @@ mod tests {
 
         // Test movement keys (Vim-style: h=left, j=down, k=up, l=right)
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::MoveLeft);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::MoveLeft);
 
         let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::MoveDown);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::MoveDown);
 
         let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::MoveUp);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::MoveUp);
 
         let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::MoveRight);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::MoveRight);
     }
 
     #[test]
     fn test_enter_command_mode() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::EnterCommandMode);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::EnterCommandMode);
     }
 
     #[test]
@@ -268,20 +346,20 @@ mod tests {
         let mode = AppMode::Command(String::new());
 
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::CommandChar('q'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::CommandChar('q'));
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::ExecuteCommand);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::ExecuteCommand);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::CancelCommand);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::CancelCommand);
     }
 
     #[test]
     fn test_ctrl_c_quit() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(handle_key_event(key, &mode, false), Action::Quit);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::Quit);
     }
 
     #[test]
@@ -290,17 +368,17 @@ mod tests {
 
         // Test entering search modes
         let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::EnterSearchMode);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::EnterSearchMode);
 
         let key = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::EnterSearchBackward);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::EnterSearchBackward);
 
         // Test find next/previous
         let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::FindNext);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::FindNext);
 
         let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::FindPrevious);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::FindPrevious);
     }
 
     #[test]
@@ -308,16 +386,16 @@ mod tests {
         let mode = AppMode::Search(String::new());
 
         let key = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::SearchChar('A'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::SearchChar('A'));
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::ExecuteSearch);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::ExecuteSearch);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::CancelSearch);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::CancelSearch);
 
         let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false), Action::SearchBackspace);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::SearchBackspace);
     }
 
     #[test]
@@ -325,9 +403,68 @@ mod tests {
         let mode = AppMode::Normal;
         // Any key when help is shown should dismiss help
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true), Action::DismissHelp);
+        assert_eq!(handle_key_event(key, &mode, true, false, false), Action::DismissHelp);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true), Action::DismissHelp);
+        assert_eq!(handle_key_event(key, &mode, true, false, false), Action::DismissHelp);
+    }
+
+    #[test]
+    fn test_jump_navigation() {
+        let mode = AppMode::Normal;
+
+        // Test 0 key (without number prefix -> go to first column)
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::GotoFirstColumn);
+
+        // Test 0 key WITH number prefix (e.g., typing 500|) -> accumulate digit
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, true), Action::AccumulateDigit('0'));
+
+        let key = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::GotoLastColumn);
+
+        // Test Home and End keys
+        let key = KeyEvent::new(KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::GotoFirstColumn);
+
+        let key = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::GotoLastColumn);
+    }
+
+    #[test]
+    fn test_g_commands() {
+        let mode = AppMode::Normal;
+
+        // Test g prefix
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::PendingG);
+
+        // Test g0, gm, g$ (with pending_g = true)
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoFirstVisibleColumn);
+
+        let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoMiddleVisibleColumn);
+
+        let key = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoLastVisibleColumn);
+
+        // gg goes to first column
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoFirstColumn);
+    }
+
+    #[test]
+    fn test_number_prefix() {
+        let mode = AppMode::Normal;
+
+        // Test digit accumulation
+        let key = KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::AccumulateDigit('5'));
+
+        // Test | to execute goto column
+        let key = KeyEvent::new(KeyCode::Char('|'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, false, false), Action::ExecuteGotoColumn);
     }
 }

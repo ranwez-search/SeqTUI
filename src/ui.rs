@@ -299,7 +299,7 @@ fn render_hint_bar(frame: &mut Frame, area: Rect) {
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
     // Calculate centered popup dimensions
     let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = 16.min(area.height.saturating_sub(4));
+    let popup_height = 22.min(area.height.saturating_sub(4));
     
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
@@ -312,21 +312,21 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
     // Help content
     let help_lines = vec![
         Line::from(Span::styled("NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  h / ←      Move left"),
-        Line::from("  l / →      Move right"),
-        Line::from("  k / ↑      Move up"),
-        Line::from("  j / ↓      Move down"),
+        Line::from("  h / ←       Move left          l / →  Move right"),
+        Line::from("  k / ↑       Move up            j / ↓  Move down"),
+        Line::from("  0 / Home    First column       $ / End  Last column"),
+        Line::from("  g0          First visible col  g$  Last visible col"),
+        Line::from("  gm          Middle visible     gg  First column"),
+        Line::from("  <num>|      Go to column (e.g., 50|)"),
         Line::from(""),
         Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  /pattern   Search forward (in names & sequences)"),
-        Line::from("  ?pattern   Search backward"),
-        Line::from("  n          Find next match"),
-        Line::from("  N          Find previous match"),
+        Line::from("  /pattern    Search forward (names & sequences)"),
+        Line::from("  ?pattern    Search backward"),
+        Line::from("  n           Next match         N   Previous match"),
         Line::from(""),
         Line::from(Span::styled("COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  :q         Quit"),
-        Line::from("  :h         Toggle this help"),
-        Line::from("  :<number>  Go to column"),
+        Line::from("  :q          Quit               :h  Toggle help"),
+        Line::from("  :<number>   Go to column"),
         Line::from(""),
         Line::from(Span::styled("Press any key to close", Style::default().fg(Color::DarkGray))),
     ];
@@ -343,8 +343,10 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
 
 /// Calculates the visible dimensions for the sequence panel.
 pub fn calculate_visible_dimensions(terminal_width: u16, terminal_height: u16) -> (usize, usize) {
-    // Account for borders, status bar, and hint bar
-    let visible_cols = (terminal_width.saturating_sub(NAME_PANEL_WIDTH + 4)) as usize;
+    // Account for name panel, sequence panel borders, status bar, and hint bar
+    // Sequence panel width = terminal_width - NAME_PANEL_WIDTH
+    // Visible cols = sequence panel width - 2 (for left/right borders)
+    let visible_cols = (terminal_width.saturating_sub(NAME_PANEL_WIDTH + 2)) as usize;
     let visible_rows = (terminal_height.saturating_sub(STATUS_BAR_HEIGHT + HINT_BAR_HEIGHT + 2)) as usize;
     (visible_rows, visible_cols)
 }
@@ -368,9 +370,9 @@ mod tests {
     #[test]
     fn test_visible_dimensions() {
         let (rows, cols) = calculate_visible_dimensions(100, 50);
-        // 100 - 20 (name panel) - 4 (borders) = 76 cols
+        // 100 - 20 (name panel) - 2 (sequence panel borders) = 78 cols
         // 50 - 1 (status) - 1 (hint) - 2 (borders) = 46 rows
-        assert_eq!(cols, 76);
+        assert_eq!(cols, 78);
         assert_eq!(rows, 46);
     }
 }
