@@ -48,33 +48,58 @@ impl ColorScheme for DnaColorScheme {
             'A' => Color::Red,
             'C' => Color::Green,
             'G' => Color::Yellow,
-            'T' => Color::Blue,
-            _ => Color::DarkGray,
+            'T' | 'U' => Color::Blue,
+            // Gap - Light gray background
+            '-' | '.' => Color::Rgb(180, 180, 180),
+            // Unknown/ambiguous (N, etc.) - Medium gray
+            'N' | 'R' | 'Y' | 'S' | 'W' | 'K' | 'M' | 'B' | 'D' | 'H' | 'V' => Color::Rgb(140, 140, 140),
+            // Stop/frameshift markers - White (must pop up!)
+            '*' | '!' => Color::White,
+            _ => Color::Rgb(140, 140, 140),
         }
     }
 }
 
-/// Amino acid color scheme (placeholder for future implementation).
-#[allow(dead_code)]
+/// Amino acid color scheme based on Seaview's coloring.
+/// Colors are chosen to match the familiar Seaview display.
 pub struct AminoAcidColorScheme;
 
 impl ColorScheme for AminoAcidColorScheme {
     fn get_color(&self, c: char) -> Color {
-        // Placeholder - implement proper amino acid colors later
-        // Could use physicochemical properties for grouping
         match c.to_ascii_uppercase() {
-            // Hydrophobic
-            'A' | 'V' | 'I' | 'L' | 'M' | 'F' | 'W' | 'P' => Color::Yellow,
-            // Polar
-            'S' | 'T' | 'N' | 'Q' | 'C' | 'G' | 'Y' => Color::Green,
-            // Charged positive
-            'K' | 'R' | 'H' => Color::Blue,
-            // Charged negative
-            'D' | 'E' => Color::Red,
-            // Gap or unknown
-            '-' | 'X' | '*' => Color::DarkGray,
-            _ => Color::Gray,
+            // Positively charged (basic) - Red
+            'K' | 'R' => Color::Red,
+            // Hydrophobic (nonpolar) - Blue
+            'A' | 'F' | 'I' | 'L' | 'M' | 'V' | 'W' => Color::Blue,
+            // Polar uncharged (green tones)
+            'N' | 'Q' | 'S' | 'T' => Color::Green,
+            // Aromatic Tyrosine and Histidine - Cyan
+            'H' | 'Y' => Color::Cyan,
+            // Cysteine - Pink/Light red
+            'C' => Color::Rgb(255, 180, 180),
+            // Negatively charged (acidic) - Magenta/Purple
+            'D' | 'E' => Color::Magenta,
+            // Proline - Yellow
+            'P' => Color::Yellow,
+            // Glycine - Light orange/salmon
+            'G' => Color::Rgb(255, 200, 150),
+            // Gap - Light gray background
+            '-' | '.' => Color::Rgb(180, 180, 180),
+            // Unknown/ambiguous (X, B, Z, etc.) - Medium gray (darker than gaps)
+            'X' | 'B' | 'Z' | 'J' | 'O' | 'U' => Color::Rgb(140, 140, 140),
+            // Stop codon and frameshift - White (must pop up!)
+            '*' | '!' => Color::White,
+            // Any other character - Medium gray
+            _ => Color::Rgb(140, 140, 140),
         }
+    }
+}
+
+/// Returns the appropriate color for a character based on sequence type.
+fn get_color_for_sequence_type(c: char, seq_type: crate::model::SequenceType) -> Color {
+    match seq_type {
+        crate::model::SequenceType::Nucleotide => DnaColorScheme.get_color(c),
+        crate::model::SequenceType::AminoAcid => AminoAcidColorScheme.get_color(c),
     }
 }
 
@@ -176,7 +201,7 @@ fn render_sequences_panel(
     visible_rows: usize,
     visible_cols: usize,
 ) {
-    let color_scheme = DnaColorScheme;
+    let seq_type = state.alignment.sequence_type;
     let mut lines: Vec<Line> = Vec::new();
 
     let start_row = state.viewport.first_row;
@@ -193,7 +218,7 @@ fn render_sequences_panel(
                 let c = seq.char_at(col_idx).unwrap_or(' ');
                 let is_cursor = is_current_row && col_idx == state.cursor.col;
 
-                let bg_color = color_scheme.get_color(c);
+                let bg_color = get_color_for_sequence_type(c, seq_type);
                 let fg_color = Color::Black;
 
                 let style = if is_cursor {
@@ -213,9 +238,14 @@ fn render_sequences_panel(
         }
     }
 
-    // Show cursor position and visible range in title
+    // Show cursor position, sequence type, and visible range in title
+    let type_str = match seq_type {
+        crate::model::SequenceType::Nucleotide => "NT",
+        crate::model::SequenceType::AminoAcid => "AA",
+    };
     let title = format!(
-        "Alignment [Site: {} | View: {}-{}/{}]",
+        "Alignment ({}) [Site: {} | View: {}-{}/{}]",
+        type_str,
         state.cursor.col + 1,
         start_col + 1,
         end_col,
@@ -363,8 +393,21 @@ mod tests {
         assert_eq!(scheme.get_color('C'), Color::Green);
         assert_eq!(scheme.get_color('G'), Color::Yellow);
         assert_eq!(scheme.get_color('T'), Color::Blue);
-        assert_eq!(scheme.get_color('-'), Color::DarkGray);
-        assert_eq!(scheme.get_color('N'), Color::DarkGray);
+        assert_eq!(scheme.get_color('-'), Color::Rgb(180, 180, 180)); // Light gray for gaps
+        assert_eq!(scheme.get_color('N'), Color::Rgb(140, 140, 140)); // Medium gray for unknown
+        assert_eq!(scheme.get_color('*'), Color::White); // Stop codon pops up
+    }
+
+    #[test]
+    fn test_amino_acid_colors() {
+        let scheme = AminoAcidColorScheme;
+        assert_eq!(scheme.get_color('K'), Color::Red);     // Basic
+        assert_eq!(scheme.get_color('L'), Color::Blue);    // Hydrophobic
+        assert_eq!(scheme.get_color('S'), Color::Green);   // Polar
+        assert_eq!(scheme.get_color('P'), Color::Yellow);  // Proline
+        assert_eq!(scheme.get_color('-'), Color::Rgb(180, 180, 180)); // Light gray for gaps
+        assert_eq!(scheme.get_color('X'), Color::Rgb(140, 140, 140)); // Medium gray for unknown
+        assert_eq!(scheme.get_color('*'), Color::White);   // Stop codon pops up
     }
 
     #[test]

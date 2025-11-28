@@ -10,6 +10,16 @@
 
 use std::ops::Range;
 
+/// Type of biological sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SequenceType {
+    /// DNA/RNA nucleotide sequences (A, C, G, T/U)
+    #[default]
+    Nucleotide,
+    /// Amino acid/protein sequences
+    AminoAcid,
+}
+
 /// Represents a single sequence with its identifier and data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sequence {
@@ -66,17 +76,65 @@ pub struct Alignment {
     pub is_valid_alignment: bool,
     /// Warning message if sequences have different lengths
     pub warning: Option<String>,
+    /// Detected sequence type (nucleotide or amino acid)
+    pub sequence_type: SequenceType,
 }
 
 impl Alignment {
     /// Creates a new alignment from a vector of sequences.
     pub fn new(sequences: Vec<Sequence>) -> Self {
         let (is_valid, alignment_length, warning) = Self::validate_alignment(&sequences);
+        let sequence_type = Self::detect_sequence_type(&sequences);
         Self {
             sequences,
             alignment_length,
             is_valid_alignment: is_valid,
             warning,
+            sequence_type,
+        }
+    }
+
+    /// Detects whether sequences are nucleotides or amino acids.
+    /// 
+    /// Uses a heuristic: if >80% of non-gap characters are A, C, G, T, U, N,
+    /// it's likely nucleotide; otherwise amino acid.
+    fn detect_sequence_type(sequences: &[Sequence]) -> SequenceType {
+        if sequences.is_empty() {
+            return SequenceType::Nucleotide;
+        }
+
+        let mut nucleotide_chars = 0;
+        let mut total_chars = 0;
+
+        // Sample up to first 1000 characters across sequences
+        'outer: for seq in sequences {
+            for c in seq.data.chars() {
+                let upper = c.to_ascii_uppercase();
+                // Skip gaps and unknown
+                if upper == '-' || upper == '.' || upper == ' ' {
+                    continue;
+                }
+                total_chars += 1;
+                // Nucleotide characters (including U for RNA and N for unknown)
+                if matches!(upper, 'A' | 'C' | 'G' | 'T' | 'U' | 'N') {
+                    nucleotide_chars += 1;
+                }
+                // Sample enough characters
+                if total_chars >= 1000 {
+                    break 'outer;
+                }
+            }
+        }
+
+        if total_chars == 0 {
+            return SequenceType::Nucleotide;
+        }
+
+        // If >80% are nucleotide characters, treat as nucleotide
+        if (nucleotide_chars as f64 / total_chars as f64) > 0.8 {
+            SequenceType::Nucleotide
+        } else {
+            SequenceType::AminoAcid
         }
     }
 
@@ -764,6 +822,37 @@ mod tests {
         let vp = Viewport::new(10, 20);
         assert_eq!(vp.row_range(), 0..10);
         assert_eq!(vp.col_range(), 0..20);
+    }
+
+    #[test]
+    fn test_sequence_type_nucleotide() {
+        let seqs = vec![
+            Sequence::new("seq1", "ACGTACGT"),
+            Sequence::new("seq2", "TGCA-TGC"),
+        ];
+        let alignment = Alignment::new(seqs);
+        assert_eq!(alignment.sequence_type, SequenceType::Nucleotide);
+    }
+
+    #[test]
+    fn test_sequence_type_amino_acid() {
+        let seqs = vec![
+            Sequence::new("seq1", "MKFLILLFNILCLFPVLAADNHGVGPQGAS"),
+            Sequence::new("seq2", "MKWVTFISLLFLFSSAYSRGVFRRDAHKSE"),
+        ];
+        let alignment = Alignment::new(seqs);
+        assert_eq!(alignment.sequence_type, SequenceType::AminoAcid);
+    }
+
+    #[test]
+    fn test_sequence_type_with_gaps() {
+        // Amino acid sequence with gaps should still be detected
+        let seqs = vec![
+            Sequence::new("seq1", "MKF---LILLFNILCLFPVL"),
+            Sequence::new("seq2", "MKW---VTFISLLFLFSSAY"),
+        ];
+        let alignment = Alignment::new(seqs);
+        assert_eq!(alignment.sequence_type, SequenceType::AminoAcid);
     }
 
     #[test]
