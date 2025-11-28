@@ -20,7 +20,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::{AppMode, AppState};
+use crate::model::{AppMode, AppState, ViewMode};
 
 /// Width reserved for sequence names (including border and padding).
 const NAME_PANEL_WIDTH: u16 = 20;
@@ -151,17 +151,23 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if state.show_help {
         render_help_overlay(frame, area);
     }
+
+    // Render translation settings overlay if active
+    if state.mode == AppMode::TranslationSettings {
+        render_translation_settings_overlay(frame, state, area);
+    }
 }
 
 /// Renders the sequence names panel (sticky, always visible).
 fn render_names_panel(frame: &mut Frame, state: &AppState, area: Rect, visible_rows: usize) {
     let mut lines: Vec<Line> = Vec::new();
+    let alignment = state.active_alignment();
 
     let start_row = state.viewport.first_row;
-    let end_row = (start_row + visible_rows).min(state.alignment.sequence_count());
+    let end_row = (start_row + visible_rows).min(alignment.sequence_count());
 
     for row_idx in start_row..end_row {
-        if let Some(seq) = state.alignment.get(row_idx) {
+        if let Some(seq) = alignment.get(row_idx) {
             let is_current = row_idx == state.cursor.row;
 
             // Truncate name if too long
@@ -201,16 +207,17 @@ fn render_sequences_panel(
     visible_rows: usize,
     visible_cols: usize,
 ) {
-    let seq_type = state.alignment.sequence_type;
+    let alignment = state.active_alignment();
+    let seq_type = alignment.sequence_type;
     let mut lines: Vec<Line> = Vec::new();
 
     let start_row = state.viewport.first_row;
-    let end_row = (start_row + visible_rows).min(state.alignment.sequence_count());
+    let end_row = (start_row + visible_rows).min(alignment.sequence_count());
     let start_col = state.viewport.first_col;
-    let end_col = (start_col + visible_cols).min(state.alignment.alignment_length());
+    let end_col = (start_col + visible_cols).min(alignment.alignment_length());
 
     for row_idx in start_row..end_row {
-        if let Some(seq) = state.alignment.get(row_idx) {
+        if let Some(seq) = alignment.get(row_idx) {
             let is_current_row = row_idx == state.cursor.row;
             let mut spans: Vec<Span> = Vec::new();
 
@@ -238,18 +245,23 @@ fn render_sequences_panel(
         }
     }
 
-    // Show cursor position, sequence type, and visible range in title
-    let type_str = match seq_type {
-        crate::model::SequenceType::Nucleotide => "NT",
-        crate::model::SequenceType::AminoAcid => "AA",
+    // Show file name, view mode info, and visible range in title
+    let view_info = match state.view_mode {
+        ViewMode::Nucleotide => "NT".to_string(),
+        ViewMode::AminoAcid => format!(
+            "AA, code {}, frame +{}",
+            state.translation_settings.genetic_code_id,
+            state.translation_settings.frame + 1
+        ),
     };
     let title = format!(
-        "Alignment ({}) [Site: {} | View: {}-{}/{}]",
-        type_str,
+        "{} ({}) [Site: {} | View: {}-{}/{}]",
+        state.file_name,
+        view_info,
         state.cursor.col + 1,
         start_col + 1,
         end_col,
-        state.alignment.alignment_length()
+        alignment.alignment_length()
     );
 
     let block = Block::default().borders(Borders::ALL).title(title);
@@ -260,19 +272,21 @@ fn render_sequences_panel(
 
 /// Renders the status bar at the bottom.
 fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
+    let alignment = state.active_alignment();
     let (mode_str, command_str) = match &state.mode {
         AppMode::Normal => ("NORMAL", String::new()),
         AppMode::Command(cmd) => ("COMMAND", format!(":{}", cmd)),
         AppMode::Search(pattern) => ("SEARCH", format!("/{}", pattern)),
         AppMode::SearchBackward(pattern) => ("SEARCH", format!("?{}", pattern)),
+        AppMode::TranslationSettings => ("TRANSLATE", String::new()),
     };
 
     let position_info = format!(
         "Seq {}/{} | Col {}/{} ",
         state.cursor.row + 1,
-        state.alignment.sequence_count(),
+        alignment.sequence_count(),
         state.cursor.col + 1,
-        state.alignment.alignment_length()
+        alignment.alignment_length()
     );
 
     // Show warning or status message if present
@@ -344,9 +358,10 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(Span::styled("NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  h / ←       Move left          l / →  Move right"),
         Line::from("  k / ↑       Move up            j / ↓  Move down"),
+        Line::from("  Ctrl+U      Half page up       Ctrl+D  Half page down"),
+        Line::from("  PgUp        Page up            PgDn  Page down"),
         Line::from("  0 / Home    First column       $ / End  Last column"),
-        Line::from("  g0          First visible col  g$  Last visible col"),
-        Line::from("  gm          Middle visible     gg  First column"),
+        Line::from("  g0/gm/g$    First/middle/last visible column"),
         Line::from("  <num>|      Go to column (e.g., 50|)"),
         Line::from(""),
         Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
@@ -356,7 +371,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
         Line::from("  :q          Quit               :h  Toggle help"),
-        Line::from("  :<number>   Go to column"),
+        Line::from("  :<number>   Go to sequence (row)"),
+        Line::from("  :asAA       Translate NT→AA    :asNT  Back to NT view"),
+        Line::from("  :setcode    Change genetic code/frame"),
         Line::from(""),
         Line::from(Span::styled("Press any key to close", Style::default().fg(Color::DarkGray))),
     ];
@@ -368,6 +385,113 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         .style(Style::default().bg(Color::Black));
 
     let paragraph = Paragraph::new(help_lines).block(block);
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Renders the translation settings overlay popup.
+fn render_translation_settings_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
+    use crate::genetic_code::GeneticCodes;
+    
+    // Calculate centered popup dimensions - smaller now since we show only one code
+    let popup_width = 56.min(area.width.saturating_sub(4));
+    let popup_height = 12.min(area.height.saturating_sub(4));
+    
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    let codes = GeneticCodes::new();
+    let all_codes = codes.all();
+    let selected_idx = state.translation_settings.selected_code_index;
+    let selected_code = all_codes.get(selected_idx);
+    
+    // Build content
+    let mut lines: Vec<Line> = Vec::new();
+    
+    // Frame selection
+    lines.push(Line::from(Span::styled(
+        "Reading Frame:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    
+    let frame_spans: Vec<Span> = (0..3)
+        .map(|f| {
+            let label = format!(" +{} ", f + 1);
+            if f == state.translation_settings.selected_frame as usize {
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(label, Style::default().fg(Color::Gray))
+            }
+        })
+        .collect();
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        frame_spans[0].clone(),
+        Span::raw("  "),
+        frame_spans[1].clone(),
+        Span::raw("  "),
+        frame_spans[2].clone(),
+    ]));
+    
+    lines.push(Line::from(""));
+    
+    // Genetic code - single line with j/k to change
+    lines.push(Line::from(Span::styled(
+        "Genetic Code:",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    
+    if let Some(code) = selected_code {
+        let code_label = format!("  {:2}. {}", code.id, code.name);
+        let truncated = if code_label.len() > popup_width as usize - 4 {
+            format!("{}…", &code_label[..popup_width as usize - 5])
+        } else {
+            code_label
+        };
+        lines.push(Line::from(Span::styled(
+            truncated,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    
+    // Navigation hint for genetic code
+    let nav_hint = format!("  ↑/↓ to change ({}/{})", selected_idx + 1, all_codes.len());
+    lines.push(Line::from(Span::styled(nav_hint, Style::default().fg(Color::DarkGray))));
+    
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" Enter ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" translate  ", Style::default().fg(Color::Gray)),
+        Span::styled(" Esc ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" cancel ", Style::default().fg(Color::Gray)),
+    ]));
+    
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Use :asNT to switch back to nucleotides",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Translation Settings ")
+        .title_style(Style::default().add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, popup_area);
 }
 

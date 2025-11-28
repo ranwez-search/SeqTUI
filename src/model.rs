@@ -270,13 +270,60 @@ pub enum AppMode {
     Search(String),
     /// Search backward mode (after pressing '?')
     SearchBackward(String),
+    /// Translation settings mode (selecting genetic code and frame)
+    TranslationSettings,
+}
+
+/// View mode for the alignment (nucleotide or translated amino acid).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    /// Original nucleotide view
+    #[default]
+    Nucleotide,
+    /// Translated amino acid view
+    AminoAcid,
+}
+
+/// Translation settings for NT to AA conversion.
+#[derive(Debug, Clone)]
+pub struct TranslationSettings {
+    /// Selected genetic code ID (1-33)
+    pub genetic_code_id: u8,
+    /// Reading frame (0, 1, or 2 for +1, +2, +3)
+    pub frame: usize,
+    /// Currently selected genetic code index in the list (for UI)
+    pub selected_code_index: usize,
+    /// Currently selected frame in the UI (0, 1, 2)
+    pub selected_frame: usize,
+    /// Scroll offset for the genetic code list
+    pub scroll_offset: usize,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        Self {
+            genetic_code_id: 1, // Standard code
+            frame: 0,          // +1 frame
+            selected_code_index: 0,
+            selected_frame: 0,
+            scroll_offset: 0,
+        }
+    }
 }
 
 /// The complete application state.
 #[derive(Debug)]
 pub struct AppState {
-    /// The loaded alignment
+    /// File name (basename without extension) for display
+    pub file_name: String,
+    /// The original loaded alignment (always nucleotide if translated)
     pub alignment: Alignment,
+    /// The translated alignment (if viewing as AA)
+    pub translated_alignment: Option<Alignment>,
+    /// Current view mode
+    pub view_mode: ViewMode,
+    /// Translation settings
+    pub translation_settings: TranslationSettings,
     /// Current viewport
     pub viewport: Viewport,
     /// Current cursor position
@@ -301,10 +348,14 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new application state with the given alignment.
-    pub fn new(alignment: Alignment) -> Self {
+    pub fn new(alignment: Alignment, file_name: String) -> Self {
         let warning = alignment.warning.clone();
         Self {
+            file_name,
             alignment,
+            translated_alignment: None,
+            view_mode: ViewMode::Nucleotide,
+            translation_settings: TranslationSettings::default(),
             viewport: Viewport::new(0, 0),
             cursor: Cursor::new(),
             mode: AppMode::Normal,
@@ -315,6 +366,14 @@ impl AppState {
             show_help: false,
             pending_g: false,
             number_buffer: String::new(),
+        }
+    }
+
+    /// Returns the currently active alignment (original or translated).
+    pub fn active_alignment(&self) -> &Alignment {
+        match self.view_mode {
+            ViewMode::Nucleotide => &self.alignment,
+            ViewMode::AminoAcid => self.translated_alignment.as_ref().unwrap_or(&self.alignment),
         }
     }
 
@@ -334,7 +393,7 @@ impl AppState {
 
     /// Moves the cursor down by one row.
     pub fn move_down(&mut self) {
-        if self.cursor.row + 1 < self.alignment.sequence_count() {
+        if self.cursor.row + 1 < self.active_alignment().sequence_count() {
             self.cursor.row += 1;
             self.ensure_cursor_visible();
         }
@@ -350,10 +409,40 @@ impl AppState {
 
     /// Moves the cursor right by one column.
     pub fn move_right(&mut self) {
-        if self.cursor.col + 1 < self.alignment.alignment_length() {
+        if self.cursor.col + 1 < self.active_alignment().alignment_length() {
             self.cursor.col += 1;
             self.ensure_cursor_visible();
         }
+    }
+
+    /// Moves the cursor up by half a page.
+    pub fn half_page_up(&mut self) {
+        let half_page = self.viewport.visible_rows / 2;
+        self.cursor.row = self.cursor.row.saturating_sub(half_page);
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the cursor down by half a page.
+    pub fn half_page_down(&mut self) {
+        let half_page = self.viewport.visible_rows / 2;
+        let max_row = self.active_alignment().sequence_count().saturating_sub(1);
+        self.cursor.row = (self.cursor.row + half_page).min(max_row);
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the cursor up by a full page.
+    pub fn page_up(&mut self) {
+        let page = self.viewport.visible_rows.saturating_sub(1).max(1);
+        self.cursor.row = self.cursor.row.saturating_sub(page);
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the cursor down by a full page.
+    pub fn page_down(&mut self) {
+        let page = self.viewport.visible_rows.saturating_sub(1).max(1);
+        let max_row = self.active_alignment().sequence_count().saturating_sub(1);
+        self.cursor.row = (self.cursor.row + page).min(max_row);
+        self.ensure_cursor_visible();
     }
 
     /// Ensures the cursor is visible in the viewport, with centering behavior.
@@ -388,16 +477,18 @@ impl AppState {
 
     /// Clamps the viewport to valid alignment bounds.
     fn clamp_viewport(&mut self) {
-        let max_row = self.alignment.sequence_count().saturating_sub(1);
-        let max_col = self.alignment.alignment_length().saturating_sub(1);
+        let seq_count = self.active_alignment().sequence_count();
+        let aln_length = self.active_alignment().alignment_length();
+        let max_row = seq_count.saturating_sub(1);
+        let max_col = aln_length.saturating_sub(1);
 
         // Ensure we don't scroll past the end
-        if self.viewport.first_row + self.viewport.visible_rows > self.alignment.sequence_count() {
-            self.viewport.first_row = self.alignment.sequence_count().saturating_sub(self.viewport.visible_rows);
+        if self.viewport.first_row + self.viewport.visible_rows > seq_count {
+            self.viewport.first_row = seq_count.saturating_sub(self.viewport.visible_rows);
         }
 
-        if self.viewport.first_col + self.viewport.visible_cols > self.alignment.alignment_length() {
-            self.viewport.first_col = self.alignment.alignment_length().saturating_sub(self.viewport.visible_cols);
+        if self.viewport.first_col + self.viewport.visible_cols > aln_length {
+            self.viewport.first_col = aln_length.saturating_sub(self.viewport.visible_cols);
         }
 
         // Clamp cursor to valid bounds
@@ -433,14 +524,27 @@ impl AppState {
             match cmd.as_str() {
                 "q" | "quit" => self.should_quit = true,
                 "h" | "help" => self.show_help(),
+                "asAA" | "asaa" => {
+                    self.enter_translation_settings();
+                    return; // Don't reset to Normal - enter_translation_settings sets the mode
+                }
+                "asNT" | "asnt" => self.switch_to_nucleotide_view(),
+                "setcode" => {
+                    self.enter_translation_settings();
+                    return; // Don't reset to Normal - enter_translation_settings sets the mode
+                }
                 _ => {
-                    // Future: handle :number for column navigation
-                    if let Ok(col) = cmd.parse::<usize>() {
-                        if col > 0 && col <= self.alignment.alignment_length() {
-                            self.cursor.col = col - 1; // 1-indexed for user
+                    // Handle :number for row/sequence navigation (like Vim's :line)
+                    if let Ok(row) = cmd.parse::<usize>() {
+                        let num_seqs = self.active_alignment().sequence_count();
+                        if row > 0 && row <= num_seqs {
+                            self.cursor.row = row - 1; // 1-indexed for user
+                            // Keep cursor column, but clamp to alignment length
+                            let aln_len = self.active_alignment().alignment_length();
+                            self.cursor.col = self.cursor.col.min(aln_len.saturating_sub(1));
                             self.ensure_cursor_visible();
                         } else {
-                            self.status_message = Some(format!("Invalid column: {}", col));
+                            self.status_message = Some(format!("Invalid sequence number: {}", row));
                         }
                     } else {
                         self.status_message = Some(format!("Unknown command: {}", cmd));
@@ -449,6 +553,135 @@ impl AppState {
             }
         }
         self.mode = AppMode::Normal;
+    }
+
+    /// Enters translation settings mode.
+    pub fn enter_translation_settings(&mut self) {
+        // Only allow translation if the original sequence is nucleotide
+        if self.alignment.sequence_type != SequenceType::Nucleotide {
+            self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
+            return;
+        }
+        self.mode = AppMode::TranslationSettings;
+    }
+
+    /// Switches to nucleotide view.
+    pub fn switch_to_nucleotide_view(&mut self) {
+        if self.view_mode == ViewMode::Nucleotide {
+            self.status_message = Some("Already in nucleotide view".to_string());
+            return;
+        }
+        
+        // Convert AA position to NT position: first nucleotide of the codon
+        // AA position n corresponds to NT positions (n*3 + frame) to (n*3 + frame + 2)
+        let frame = self.translation_settings.frame as usize;
+        let nt_col = self.cursor.col * 3 + frame;
+        self.cursor.col = nt_col.min(self.alignment.alignment_length().saturating_sub(1));
+        
+        self.view_mode = ViewMode::Nucleotide;
+        self.ensure_cursor_visible();
+        self.status_message = Some("Switched to nucleotide view".to_string());
+    }
+
+    /// Switches to amino acid view (performs translation).
+    pub fn switch_to_amino_acid_view(&mut self) {
+        use crate::genetic_code::GeneticCodes;
+        
+        // Perform translation
+        let codes = GeneticCodes::new();
+        let code = codes.get(self.translation_settings.genetic_code_id)
+            .unwrap_or_else(|| codes.default_code());
+        let frame = self.translation_settings.frame as usize;
+        
+        // Translate all sequences
+        let translated_seqs: Vec<crate::model::Sequence> = self.alignment.sequences.iter()
+            .map(|seq| {
+                let aa_data = code.translate_sequence(&seq.data, frame);
+                Sequence::new(seq.id.clone(), aa_data)
+            })
+            .collect();
+        
+        let mut translated = Alignment::new(translated_seqs);
+        // Force sequence type to AminoAcid
+        translated.sequence_type = SequenceType::AminoAcid;
+        self.translated_alignment = Some(translated);
+        
+        // Convert NT cursor position to AA position
+        // NT position n in frame f corresponds to AA position (n - f) / 3
+        let aa_col = if self.cursor.col >= frame {
+            (self.cursor.col - frame) / 3
+        } else {
+            0
+        };
+        
+        let aa_len = self.translated_alignment.as_ref()
+            .map(|a| a.alignment_length())
+            .unwrap_or(0);
+        self.cursor.col = aa_col.min(aa_len.saturating_sub(1));
+        
+        self.view_mode = ViewMode::AminoAcid;
+        self.ensure_cursor_visible();
+        self.status_message = Some(format!(
+            "Translated using code {} (frame +{})",
+            self.translation_settings.genetic_code_id,
+            self.translation_settings.frame + 1
+        ));
+    }
+
+    /// Confirms translation settings and switches to AA view.
+    pub fn confirm_translation_settings(&mut self) {
+        // Copy selected values to actual settings
+        self.translation_settings.genetic_code_id = {
+            use crate::genetic_code::GeneticCodes;
+            let codes = GeneticCodes::new();
+            codes.all().get(self.translation_settings.selected_code_index)
+                .map(|c| c.id)
+                .unwrap_or(1)
+        };
+        self.translation_settings.frame = self.translation_settings.selected_frame;
+        
+        self.mode = AppMode::Normal;
+        self.switch_to_amino_acid_view();
+    }
+
+    /// Cancels translation settings.
+    pub fn cancel_translation_settings(&mut self) {
+        self.mode = AppMode::Normal;
+    }
+
+    /// Moves selection up in translation settings.
+    pub fn translation_settings_up(&mut self) {
+        if self.translation_settings.selected_code_index > 0 {
+            self.translation_settings.selected_code_index -= 1;
+            // Adjust scroll if needed
+            if self.translation_settings.selected_code_index < self.translation_settings.scroll_offset {
+                self.translation_settings.scroll_offset = self.translation_settings.selected_code_index;
+            }
+        }
+    }
+
+    /// Moves selection down in translation settings.
+    pub fn translation_settings_down(&mut self) {
+        use crate::genetic_code::GeneticCodes;
+        let codes = GeneticCodes::new();
+        let max_index = codes.all().len().saturating_sub(1);
+        if self.translation_settings.selected_code_index < max_index {
+            self.translation_settings.selected_code_index += 1;
+        }
+    }
+
+    /// Cycles frame selection left in translation settings.
+    pub fn translation_settings_frame_left(&mut self) {
+        if self.translation_settings.selected_frame > 0 {
+            self.translation_settings.selected_frame -= 1;
+        }
+    }
+
+    /// Cycles frame selection right in translation settings.
+    pub fn translation_settings_frame_right(&mut self) {
+        if self.translation_settings.selected_frame < 2 {
+            self.translation_settings.selected_frame += 1;
+        }
     }
 
     /// Shows help information.
@@ -497,8 +730,9 @@ impl AppState {
     /// Goes to the last column (end of alignment).
     pub fn goto_last_column(&mut self) {
         self.clear_pending();
-        if self.alignment.alignment_length() > 0 {
-            self.cursor.col = self.alignment.alignment_length() - 1;
+        let aln_len = self.active_alignment().alignment_length();
+        if aln_len > 0 {
+            self.cursor.col = aln_len - 1;
             self.ensure_cursor_visible();
         }
     }
@@ -513,20 +747,21 @@ impl AppState {
     pub fn goto_middle_visible_column(&mut self) {
         self.clear_pending();
         let middle = self.viewport.first_col + self.viewport.visible_cols / 2;
-        self.cursor.col = middle.min(self.alignment.alignment_length().saturating_sub(1));
+        self.cursor.col = middle.min(self.active_alignment().alignment_length().saturating_sub(1));
     }
 
     /// Goes to the last visible column (g$).
     pub fn goto_last_visible_column(&mut self) {
         self.clear_pending();
         let last_visible = self.viewport.first_col + self.viewport.visible_cols.saturating_sub(1);
-        self.cursor.col = last_visible.min(self.alignment.alignment_length().saturating_sub(1));
+        self.cursor.col = last_visible.min(self.active_alignment().alignment_length().saturating_sub(1));
     }
 
     /// Goes to a specific column (1-indexed for user).
     pub fn goto_column(&mut self, col: usize) {
         self.clear_pending();
-        if col > 0 && col <= self.alignment.alignment_length() {
+        let aln_len = self.active_alignment().alignment_length();
+        if col > 0 && col <= aln_len {
             self.cursor.col = col - 1; // 1-indexed for user
             self.ensure_cursor_visible();
         } else if col == 0 {
@@ -648,8 +883,9 @@ impl AppState {
         let pattern_upper = pattern.to_uppercase();
         let start_row = self.cursor.row;
         let start_col = self.cursor.col;
-        let num_rows = self.alignment.sequence_count();
-        let num_cols = self.alignment.alignment_length();
+        let alignment = self.active_alignment();
+        let num_rows = alignment.sequence_count();
+        let num_cols = alignment.alignment_length();
 
         if num_rows == 0 || num_cols == 0 {
             self.status_message = Some(format!("Pattern not found: {}", pattern));
@@ -657,7 +893,8 @@ impl AppState {
         }
 
         // Search from current position to end of current row (sequence data only)
-        if let Some(seq) = self.alignment.get(start_row) {
+        let alignment = self.active_alignment();
+        if let Some(seq) = alignment.get(start_row) {
             let search_start = start_col + 1; // Start after current position
             if search_start < seq.data.len() {
                 if let Some(pos) = seq.data[search_start..].to_uppercase().find(&pattern_upper) {
@@ -672,7 +909,8 @@ impl AppState {
         // Search remaining rows (name first, then data)
         for row_offset in 1..=num_rows {
             let row = (start_row + row_offset) % num_rows;
-            if let Some(seq) = self.alignment.get(row) {
+            let alignment = self.active_alignment();
+            if let Some(seq) = alignment.get(row) {
                 // First check sequence name
                 if seq.id.to_uppercase().contains(&pattern_upper) {
                     self.cursor.row = row;
@@ -710,8 +948,9 @@ impl AppState {
         let pattern_upper = pattern.to_uppercase();
         let start_row = self.cursor.row;
         let start_col = self.cursor.col;
-        let num_rows = self.alignment.sequence_count();
-        let num_cols = self.alignment.alignment_length();
+        let alignment = self.active_alignment();
+        let num_rows = alignment.sequence_count();
+        let num_cols = alignment.alignment_length();
 
         if num_rows == 0 || num_cols == 0 {
             self.status_message = Some(format!("Pattern not found: {}", pattern));
@@ -719,7 +958,8 @@ impl AppState {
         }
 
         // Search from current position backward in current row (data only)
-        if let Some(seq) = self.alignment.get(start_row) {
+        let alignment = self.active_alignment();
+        if let Some(seq) = alignment.get(start_row) {
             if start_col > 0 {
                 let search_area = &seq.data[..start_col];
                 if let Some(pos) = search_area.to_uppercase().rfind(&pattern_upper) {
@@ -741,7 +981,8 @@ impl AppState {
         // Search previous rows (data first from end, then name)
         for row_offset in 1..=num_rows {
             let row = (start_row + num_rows - row_offset) % num_rows;
-            if let Some(seq) = self.alignment.get(row) {
+            let alignment = self.active_alignment();
+            if let Some(seq) = alignment.get(row) {
                 // First check sequence data (from end)
                 if let Some(pos) = seq.data.to_uppercase().rfind(&pattern_upper) {
                     self.cursor.row = row;
@@ -863,7 +1104,7 @@ mod tests {
             Sequence::new("seq3", "AAAAAAAA"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(3, 4);
 
         // Initial position
@@ -897,7 +1138,7 @@ mod tests {
     fn test_help_command() {
         let seqs = vec![Sequence::new("seq1", "ACGT")];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
 
         // Initially help is not shown
         assert!(!state.show_help);
@@ -926,7 +1167,7 @@ mod tests {
             Sequence::new("seq3", "AAAAGAAA"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(3, 8);
 
         // Search for "TGC" starting from (0,0)
@@ -959,7 +1200,7 @@ mod tests {
             Sequence::new("seq3", "AAAAGAAA"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(3, 8);
 
         // Move to last row, last column
@@ -985,7 +1226,7 @@ mod tests {
             Sequence::new("seq2", "tgcatgca"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(2, 8);
 
         // Search for lowercase pattern in uppercase sequence
@@ -1006,7 +1247,7 @@ mod tests {
             Sequence::new("seq2", "ACGTACGT"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(2, 8);
 
         // Search for "CGT"
@@ -1042,7 +1283,7 @@ mod tests {
             Sequence::new("seq1", "ACGTACGT"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(1, 8);
 
         state.enter_search_mode(false);
@@ -1065,7 +1306,7 @@ mod tests {
             Sequence::new("Chicken_BRCA2", "AAAAGAAA"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(3, 8);
 
         // Search for "Mouse" - should find by sequence name
@@ -1102,7 +1343,7 @@ mod tests {
             Sequence::new("mouse_gene", "TGCATGCA"),
         ];
         let alignment = Alignment::new(seqs);
-        let mut state = AppState::new(alignment);
+        let mut state = AppState::new(alignment, "test".to_string());
         state.update_viewport_size(2, 8);
 
         // Search for lowercase "human" should match "Human_Gene"

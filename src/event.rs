@@ -88,6 +88,26 @@ pub enum Action {
     AccumulateDigit(char),
     /// Execute pending number with | (go to column)
     ExecuteGotoColumn,
+    /// Translation settings: move selection up
+    TranslationUp,
+    /// Translation settings: move selection down
+    TranslationDown,
+    /// Translation settings: select previous frame
+    TranslationFrameLeft,
+    /// Translation settings: select next frame
+    TranslationFrameRight,
+    /// Translation settings: confirm and translate
+    TranslationConfirm,
+    /// Translation settings: cancel
+    TranslationCancel,
+    /// Move half page up (Ctrl+U)
+    HalfPageUp,
+    /// Move half page down (Ctrl+D)
+    HalfPageDown,
+    /// Move full page up (PageUp)
+    PageUp,
+    /// Move full page down (PageDown)
+    PageDown,
 }
 
 /// Polls for keyboard events with a timeout.
@@ -126,6 +146,7 @@ fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool, pending_g: b
         AppMode::Normal => handle_normal_mode(key, has_number_prefix),
         AppMode::Command(_) => handle_command_mode(key),
         AppMode::Search(_) | AppMode::SearchBackward(_) => handle_search_mode(key),
+        AppMode::TranslationSettings => handle_translation_settings_mode(key),
     }
 }
 
@@ -135,7 +156,6 @@ fn handle_g_command(key: KeyEvent) -> Action {
         KeyCode::Char('0') => Action::GotoFirstVisibleColumn,
         KeyCode::Char('m') => Action::GotoMiddleVisibleColumn,
         KeyCode::Char('$') => Action::GotoLastVisibleColumn,
-        KeyCode::Char('g') => Action::GotoFirstColumn, // gg goes to first column (like Vim's gg)
         _ => Action::None, // Unknown g-command, cancel
     }
 }
@@ -145,6 +165,16 @@ fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
     // Handle Ctrl+C for emergency quit
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Action::Quit;
+    }
+
+    // Handle Ctrl+U for half page up
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
+        return Action::HalfPageUp;
+    }
+
+    // Handle Ctrl+D for half page down
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        return Action::HalfPageDown;
     }
 
     match key.code {
@@ -167,6 +197,10 @@ fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
         KeyCode::Char('$') => Action::GotoLastColumn,
         KeyCode::Home => Action::GotoFirstColumn,
         KeyCode::End => Action::GotoLastColumn,
+
+        // Page navigation
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
 
         // g-prefix commands (handled via pending state)
         KeyCode::Char('g') => Action::PendingG,
@@ -210,6 +244,25 @@ fn handle_search_mode(key: KeyEvent) -> Action {
         KeyCode::Esc => Action::CancelSearch,
         KeyCode::Backspace => Action::SearchBackspace,
         KeyCode::Char(c) => Action::SearchChar(c),
+        _ => Action::None,
+    }
+}
+
+/// Handles key events in translation settings mode.
+fn handle_translation_settings_mode(key: KeyEvent) -> Action {
+    match key.code {
+        // Navigation
+        KeyCode::Char('j') | KeyCode::Down => Action::TranslationDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::TranslationUp,
+        KeyCode::Char('h') | KeyCode::Left => Action::TranslationFrameLeft,
+        KeyCode::Char('l') | KeyCode::Right => Action::TranslationFrameRight,
+        // Frame selection with number keys
+        KeyCode::Char('1') => Action::TranslationFrameLeft, // Will cycle, or we can set directly
+        KeyCode::Char('2') => Action::TranslationFrameRight,
+        KeyCode::Char('3') => Action::TranslationFrameRight,
+        // Confirm / Cancel
+        KeyCode::Enter => Action::TranslationConfirm,
+        KeyCode::Esc | KeyCode::Char('q') => Action::TranslationCancel,
         _ => Action::None,
     }
 }
@@ -306,6 +359,36 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ExecuteGotoColumn => {
             state.execute_goto_column();
+        }
+        Action::TranslationUp => {
+            state.translation_settings_up();
+        }
+        Action::TranslationDown => {
+            state.translation_settings_down();
+        }
+        Action::TranslationFrameLeft => {
+            state.translation_settings_frame_left();
+        }
+        Action::TranslationFrameRight => {
+            state.translation_settings_frame_right();
+        }
+        Action::TranslationConfirm => {
+            state.confirm_translation_settings();
+        }
+        Action::TranslationCancel => {
+            state.cancel_translation_settings();
+        }
+        Action::HalfPageUp => {
+            state.half_page_up();
+        }
+        Action::HalfPageDown => {
+            state.half_page_down();
+        }
+        Action::PageUp => {
+            state.page_up();
+        }
+        Action::PageDown => {
+            state.page_down();
         }
     }
 
@@ -450,9 +533,9 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
         assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoLastVisibleColumn);
 
-        // gg goes to first column
-        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::GotoFirstColumn);
+        // Unknown g-command returns None
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(handle_key_event(key, &mode, false, true, false), Action::None);
     }
 
     #[test]

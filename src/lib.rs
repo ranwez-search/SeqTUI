@@ -10,6 +10,7 @@
 //! - `event`: Keyboard event handling (Vim-style navigation)
 //! - `ui`: TUI rendering with ratatui
 //! - `controller`: Orchestration of state transitions
+//! - `genetic_code`: NCBI genetic codes and translation logic
 //!
 //! ## Future Extensions
 //!
@@ -26,5 +27,6 @@
 pub mod controller;
 pub mod event;
 pub mod fasta;
+pub mod genetic_code;
 pub mod model;
 pub mod ui;

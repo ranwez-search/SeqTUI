@@ -56,8 +56,15 @@ fn main() -> Result<()> {
         );
     }
 
+    // Extract file name (basename without extension)
+    let file_name = file_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("alignment")
+        .to_string();
+
     // Create application state
-    let state = AppState::new(alignment);
+    let state = AppState::new(alignment, file_name);
 
     // Run the TUI application
     run_app(state)?;

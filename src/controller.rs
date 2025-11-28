@@ -120,7 +120,7 @@ mod tests {
             Sequence::new("seq2", "TGCA"),
         ];
         let alignment = Alignment::new(seqs);
-        let state = AppState::new(alignment);
+        let state = AppState::new(alignment, "test".to_string());
 
         assert_eq!(state.alignment.sequence_count(), 2);
         assert!(!state.should_quit);

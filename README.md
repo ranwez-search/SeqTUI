@@ -4,16 +4,15 @@ A terminal-based viewer for FASTA sequence alignments written in Rust using [rat
 
 ## Features
 
-- 🧬 **FASTA Support**: Load and visualize aligned DNA/protein sequences
-- 🎨 **Color Coded**: Nucleotides displayed with distinct background colors
-  - A: Red
-  - C: Green
-  - G: Yellow
-  - T: Blue
-  - Others: Gray
+- 🧬 **FASTA Support**: Load and visualize aligned DNA/RNA and protein sequences
+- 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
+  - **Nucleotides**: A (Red), C (Green), G (Yellow), T/U (Blue)
+  - **Amino Acids**: Seaview-style coloring by chemical properties
+- 🔄 **NT → AA Translation**: Translate nucleotide sequences to amino acids with 33 genetic codes
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling horizontally
-- ⌨️ **Vim-style Navigation**: Intuitive keyboard controls
-- 🔍 **Auto-centering**: Column stays centered when scrolling
+- ⌨️ **Vim-style Navigation**: Intuitive keyboard controls with search
+- 🔍 **Pattern Search**: Search forward (`/`) and backward (`?`) in sequences and names
+- ❓ **Built-in Help**: Press `:h` to see all available commands
 
 ## Installation
 
@@ -40,43 +39,63 @@ cargo run -- sequences.fasta
 
 | Key | Action |
 |-----|--------|
-| `i` | Move up |
-| `k` | Move down |
-| `j` | Move right (next column) |
-| `l` | Move left (previous column) |
-| `:q` | Quit |
-| `:123` | Jump to column 123 |
-| `Ctrl+C` | Emergency quit |
+| `h` / `←` | Move left |
+| `l` / `→` | Move right |
+| `k` / `↑` | Move up |
+| `j` / `↓` | Move down |
+| `Ctrl+U` | Half page up |
+| `Ctrl+D` | Half page down |
+| `PgUp` / `PgDn` | Full page up/down |
+| `0` / `Home` | First column |
+| `$` / `End` | Last column |
+| `g0` / `gm` / `g$` | First/middle/last visible column |
+| `<num>\|` | Go to column (e.g., `50\|`) |
 
-Arrow keys also work for navigation.
+## Search
+
+| Key | Action |
+|-----|--------|
+| `/pattern` | Search forward |
+| `?pattern` | Search backward |
+| `n` | Next match |
+| `N` | Previous match |
+
+## Commands
+
+| Command | Action |
+|---------|--------|
+| `:q` | Quit |
+| `:h` | Toggle help overlay |
+| `:<number>` | Go to sequence/row |
+| `:asAA` | Translate nucleotides to amino acids |
+| `:asNT` | Switch back to nucleotide view |
+| `:setcode` | Change genetic code and reading frame |
+
+## Translation
+
+For nucleotide alignments, use `:asAA` to translate to amino acids:
+- Choose from 33 NCBI genetic codes
+- Select reading frame (+1, +2, +3)
+- Use `j`/`k` to browse codes, `h`/`l` to change frame
+- Press `Enter` to translate, `Esc` to cancel
+
+Use `:asNT` to switch back to the nucleotide view.
 
 ## Architecture
 
-The application follows an event-driven architecture:
+The application follows an event-driven MVC architecture:
 
 ```
 src/
-├── main.rs        # Entry point and CLI argument parsing
-├── lib.rs         # Module exports
-├── model.rs       # Data structures (Sequence, Alignment, Viewport, AppState)
-├── fasta.rs       # FASTA file parsing
-├── event.rs       # Keyboard event handling
-├── ui.rs          # TUI rendering with ratatui
-└── controller.rs  # Main application loop
+├── main.rs         # Entry point and CLI argument parsing
+├── lib.rs          # Module exports
+├── model.rs        # Data structures (Sequence, Alignment, Viewport, AppState)
+├── fasta.rs        # FASTA file parsing
+├── event.rs        # Keyboard event handling
+├── ui.rs           # TUI rendering with ratatui
+├── controller.rs   # Main application loop
+└── genetic_code.rs # Genetic code tables and translation
 ```
-
-## Future Extensions
-
-The architecture is designed to support future enhancements:
-
-- [ ] Amino acid color schemes
-- [ ] Large alignment optimization
-- [ ] Pattern search (/)
-- [ ] File browser panel
-- [ ] Sequence/site filtering
-- [ ] Codon coloring
-- [ ] NT → AA translation
-- [ ] Export current view as FASTA
 
 ## Development
 
@@ -89,6 +108,13 @@ cargo run -- test_data/alignment.fasta
 
 # Build release version
 cargo build --release
+```
+
+## Building for Linux (HPC)
+
+```bash
+# On Linux or cross-compile
+cargo build --release --target x86_64-unknown-linux-gnu
 ```
 
 ## License
