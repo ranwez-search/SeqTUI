@@ -149,7 +149,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Render help overlay if active
     if state.show_help {
-        render_help_overlay(frame, area);
+        render_help_overlay(frame, state, area);
     }
 
     // Render translation settings overlay if active
@@ -339,11 +339,13 @@ fn render_hint_bar(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Renders a centered help overlay popup.
-fn render_help_overlay(frame: &mut Frame, area: Rect) {
+/// Renders a centered help overlay popup with tabs.
+fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
+    use crate::model::HelpTab;
+    
     // Calculate centered popup dimensions
-    let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = 22.min(area.height.saturating_sub(4));
+    let popup_width = 58.min(area.width.saturating_sub(4));
+    let popup_height = 18.min(area.height.saturating_sub(4));
     
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
@@ -353,30 +355,110 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
     // Clear the area behind the popup
     frame.render_widget(Clear, popup_area);
 
-    // Help content
-    let help_lines = vec![
-        Line::from(Span::styled("NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  h / ←       Move left          l / →  Move right"),
-        Line::from("  k / ↑       Move up            j / ↓  Move down"),
-        Line::from("  Ctrl+U      Half page up       Ctrl+D  Half page down"),
-        Line::from("  PgUp        Page up            PgDn  Page down"),
-        Line::from("  0 / Home    First column       $ / End  Last column"),
-        Line::from("  g0/gm/g$    First/middle/last visible column"),
-        Line::from("  <num>|      Go to column (e.g., 50|)"),
+    // Build tab bar
+    let tab_spans: Vec<Span> = HelpTab::all()
+        .iter()
+        .map(|&tab| {
+            let name = format!(" {} ", tab.name());
+            if tab == state.help_tab {
+                Span::styled(
+                    name,
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(name, Style::default().fg(Color::Gray))
+            }
+        })
+        .collect();
+
+    // Help content based on selected tab
+    let mut help_lines: Vec<Line> = vec![
+        Line::from(tab_spans),
         Line::from(""),
-        Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  /pattern    Search forward (names & sequences)"),
-        Line::from("  ?pattern    Search backward"),
-        Line::from("  n           Next match         N   Previous match"),
-        Line::from(""),
-        Line::from(Span::styled("COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
-        Line::from("  :q          Quit               :h  Toggle help"),
-        Line::from("  :<number>   Go to sequence (row)"),
-        Line::from("  :asAA       Translate NT→AA    :asNT  Back to NT view"),
-        Line::from("  :setcode    Change genetic code/frame"),
-        Line::from(""),
-        Line::from(Span::styled("Press any key to close", Style::default().fg(Color::DarkGray))),
     ];
+
+    match state.help_tab {
+        HelpTab::Basics => {
+            help_lines.extend(vec![
+                Line::from(Span::styled("GETTING STARTED", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  SeqTUI displays FASTA sequence alignments."),
+                Line::from("  Use arrow keys or Vim keys to navigate."),
+                Line::from(""),
+                Line::from(Span::styled("QUICK COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  :q             Quit the application"),
+                Line::from("  :h             Toggle this help"),
+                Line::from("  :<number>      Jump to sequence/row number"),
+                Line::from(""),
+                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+            ]);
+        }
+        HelpTab::Navigation => {
+            help_lines.extend(vec![
+                Line::from(Span::styled("ARROW KEY NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  ←↑↓→           Move one position"),
+                Line::from("  Shift + ←→     Half page left/right"),
+                Line::from("  Shift + ↑↓     Full page up/down"),
+                Line::from(""),
+                Line::from("  Home           Go to first column"),
+                Line::from("  End            Go to last column"),
+                Line::from("  PgUp / PgDn    Page up/down"),
+                Line::from(""),
+                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+            ]);
+        }
+        HelpTab::VimNav => {
+            help_lines.extend(vec![
+                Line::from(Span::styled("VIM-STYLE NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  h / j / k / l  Move left/down/up/right"),
+                Line::from("  Ctrl+U / D     Half page up/down"),
+                Line::from("  zH / zL        Half page left/right"),
+                Line::from(""),
+                Line::from("  0 / $          First / last column"),
+                Line::from("  g0 / gm / g$   First/middle/last visible column"),
+                Line::from("  <num>|         Go to column (e.g., 50|)"),
+                Line::from(""),
+                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+            ]);
+        }
+        HelpTab::Search => {
+            help_lines.extend(vec![
+                Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  /pattern       Search forward"),
+                Line::from("  ?pattern       Search backward"),
+                Line::from("  n              Find next match"),
+                Line::from("  N              Find previous match"),
+                Line::from(""),
+                Line::from("  Searches both sequence names and sequences."),
+                Line::from("  Search is case-insensitive."),
+                Line::from(""),
+                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+            ]);
+        }
+        HelpTab::Translation => {
+            help_lines.extend(vec![
+                Line::from(Span::styled("TRANSLATION (NT → AA)", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  :asAA          Translate nucleotides to amino acids"),
+                Line::from("  :asNT          Switch back to nucleotide view"),
+                Line::from("  :setcode       Open translation settings"),
+                Line::from(""),
+                Line::from(Span::styled("TRANSLATION SETTINGS (:setcode)", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  ↑/↓ or j/k     Select genetic code (33 available)"),
+                Line::from("  ←/→ or h/l     Select reading frame (+1, +2, +3)"),
+                Line::from("  Enter          Confirm and translate"),
+                Line::from("  Esc            Cancel"),
+            ]);
+        }
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)

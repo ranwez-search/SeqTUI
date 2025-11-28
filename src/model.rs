@@ -289,6 +289,57 @@ impl Cursor {
     }
 }
 
+/// Help tab sections
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HelpTab {
+    #[default]
+    Basics,
+    Navigation,
+    VimNav,
+    Search,
+    Translation,
+}
+
+impl HelpTab {
+    /// Returns the next tab (wrapping around)
+    pub fn next(self) -> Self {
+        match self {
+            HelpTab::Basics => HelpTab::Navigation,
+            HelpTab::Navigation => HelpTab::VimNav,
+            HelpTab::VimNav => HelpTab::Search,
+            HelpTab::Search => HelpTab::Translation,
+            HelpTab::Translation => HelpTab::Basics,
+        }
+    }
+
+    /// Returns the previous tab (wrapping around)
+    pub fn prev(self) -> Self {
+        match self {
+            HelpTab::Basics => HelpTab::Translation,
+            HelpTab::Navigation => HelpTab::Basics,
+            HelpTab::VimNav => HelpTab::Navigation,
+            HelpTab::Search => HelpTab::VimNav,
+            HelpTab::Translation => HelpTab::Search,
+        }
+    }
+
+    /// Returns the tab name for display
+    pub fn name(self) -> &'static str {
+        match self {
+            HelpTab::Basics => "Basics",
+            HelpTab::Navigation => "Arrow Nav",
+            HelpTab::VimNav => "Vim Nav",
+            HelpTab::Search => "Search",
+            HelpTab::Translation => "Translation",
+        }
+    }
+
+    /// Returns all tabs in order
+    pub fn all() -> &'static [HelpTab] {
+        &[HelpTab::Basics, HelpTab::Navigation, HelpTab::VimNav, HelpTab::Search, HelpTab::Translation]
+    }
+}
+
 /// Application mode for handling different input states.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AppMode {
@@ -371,8 +422,12 @@ pub struct AppState {
     pub last_search_backward: bool,
     /// Whether to show the help overlay
     pub show_help: bool,
+    /// Current help tab
+    pub help_tab: HelpTab,
     /// Pending 'g' key for g-commands
     pub pending_g: bool,
+    /// Pending 'z' key for z-commands
+    pub pending_z: bool,
     /// Number buffer for <number>| command
     pub number_buffer: String,
 }
@@ -395,7 +450,9 @@ impl AppState {
             last_search: None,
             last_search_backward: false,
             show_help: false,
+            help_tab: HelpTab::default(),
             pending_g: false,
+            pending_z: false,
             number_buffer: String::new(),
         }
     }
@@ -463,6 +520,23 @@ impl AppState {
         let half_page = self.viewport.visible_rows / 2;
         let max_row = self.active_alignment().sequence_count().saturating_sub(1);
         self.cursor.row = (self.cursor.row + half_page).min(max_row);
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the cursor left by half a screen width.
+    pub fn half_page_left(&mut self) {
+        self.clear_pending();
+        let half_page = self.viewport.visible_cols / 2;
+        self.cursor.col = self.cursor.col.saturating_sub(half_page);
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the cursor right by half a screen width.
+    pub fn half_page_right(&mut self) {
+        self.clear_pending();
+        let half_page = self.viewport.visible_cols / 2;
+        let max_col = self.active_alignment().alignment_length().saturating_sub(1);
+        self.cursor.col = (self.cursor.col + half_page).min(max_col);
         self.ensure_cursor_visible();
     }
 
@@ -735,21 +809,41 @@ impl AppState {
         self.show_help = false;
     }
 
+    /// Navigates to the next help tab.
+    pub fn help_next_tab(&mut self) {
+        self.help_tab = self.help_tab.next();
+    }
+
+    /// Navigates to the previous help tab.
+    pub fn help_prev_tab(&mut self) {
+        self.help_tab = self.help_tab.prev();
+    }
+
     /// Clears any pending key state.
     fn clear_pending(&mut self) {
         self.pending_g = false;
+        self.pending_z = false;
         self.number_buffer.clear();
     }
 
     /// Sets the pending 'g' state for g-commands.
     pub fn set_pending_g(&mut self) {
         self.pending_g = true;
+        self.pending_z = false;
+        self.number_buffer.clear();
+    }
+
+    /// Sets the pending 'z' state for z-commands.
+    pub fn set_pending_z(&mut self) {
+        self.pending_z = true;
+        self.pending_g = false;
         self.number_buffer.clear();
     }
 
     /// Accumulates a digit for the number prefix.
     pub fn accumulate_digit(&mut self, c: char) {
         self.pending_g = false;
+        self.pending_z = false;
         self.number_buffer.push(c);
     }
 

@@ -10,9 +10,11 @@ A terminal-based viewer for FASTA sequence alignments written in Rust using [rat
   - **Amino Acids**: Seaview-style coloring by chemical properties
 - 🔄 **NT → AA Translation**: Translate nucleotide sequences to amino acids with 33 genetic codes
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling horizontally
-- ⌨️ **Vim-style Navigation**: Intuitive keyboard controls with search
+- ⌨️ **Vim-style Navigation**: Full Vim-like controls (h/j/k/l, Ctrl+U/D, zH/zL, g0/gm/g$)
+- 🖱️ **Arrow Navigation**: Shift+arrows for page/half-page scrolling
 - 🔍 **Pattern Search**: Search forward (`/`) and backward (`?`) in sequences and names
-- ❓ **Built-in Help**: Press `:h` to see all available commands
+- ❓ **Tabbed Help**: Press `:h` for organized help with 5 sections
+- 🚀 **Large File Support**: Optimized for 500MB+ alignments with jemalloc allocator
 
 ## Installation
 
@@ -37,17 +39,22 @@ cargo run -- sequences.fasta
 
 ## Navigation
 
+### Arrow Keys
 | Key | Action |
 |-----|--------|
-| `h` / `←` | Move left |
-| `l` / `→` | Move right |
-| `k` / `↑` | Move up |
-| `j` / `↓` | Move down |
-| `Ctrl+U` | Half page up |
-| `Ctrl+D` | Half page down |
+| `←↑↓→` | Move one position |
+| `Shift+←→` | Half page left/right |
+| `Shift+↑↓` | Full page up/down |
+| `Home` / `End` | First / last column |
 | `PgUp` / `PgDn` | Full page up/down |
-| `0` / `Home` | First column |
-| `$` / `End` | Last column |
+
+### Vim-style
+| Key | Action |
+|-----|--------|
+| `h` / `j` / `k` / `l` | Move left/down/up/right |
+| `Ctrl+U` / `Ctrl+D` | Half page up/down |
+| `zH` / `zL` | Half page left/right |
+| `0` / `$` | First / last column |
 | `g0` / `gm` / `g$` | First/middle/last visible column |
 | `<num>\|` | Go to column (e.g., `50\|`) |
 
