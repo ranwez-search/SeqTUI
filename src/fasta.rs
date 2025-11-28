@@ -13,7 +13,7 @@
 //! ```
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 use thiserror::Error;
@@ -58,9 +58,93 @@ pub type FastaResult<T> = Result<T, FastaError>;
 /// println!("Loaded {} sequences", alignment.sequence_count());
 /// ```
 pub fn parse_fasta_file<P: AsRef<Path>>(path: P) -> FastaResult<Alignment> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    parse_fasta(reader)
+    let file = File::open(&path)?;
+    let metadata = file.metadata()?;
+    let file_size = metadata.len() as usize;
+    
+    // For large files, read entire file into memory at once (faster than line-by-line)
+    if file_size > 1_000_000 {
+        // > 1MB: read all at once
+        let mut reader = BufReader::with_capacity(1024 * 1024, file); // 1MB buffer
+        let mut content = String::with_capacity(file_size);
+        reader.read_to_string(&mut content)?;
+        parse_fasta_fast(&content)
+    } else {
+        // Small files: use line-by-line for memory efficiency
+        let reader = BufReader::new(file);
+        parse_fasta(reader)
+    }
+}
+
+/// Fast FASTA parser that works on a pre-loaded string.
+/// Avoids per-line allocations by working with slices and bytes.
+fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
+    // Estimate number of sequences (rough: one per 1KB on average for alignments)
+    let estimated_seqs = (content.len() / 1000).max(10);
+    let mut sequences = Vec::with_capacity(estimated_seqs);
+    
+    let mut current_id: Option<&str> = None;
+    let mut current_seq: Vec<u8> = Vec::new();
+    let mut line_number = 0;
+
+    for line in content.lines() {
+        line_number += 1;
+        let line = line.trim();
+
+        // Skip empty lines
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(header) = line.strip_prefix('>') {
+            // Save previous sequence if exists
+            if let Some(id) = current_id.take() {
+                if !current_seq.is_empty() {
+                    sequences.push(Sequence::from_bytes(id, std::mem::take(&mut current_seq)));
+                }
+            }
+
+            // Parse new header - take everything before first space as ID
+            let id = header.split_whitespace().next().unwrap_or(header);
+
+            if id.is_empty() {
+                return Err(FastaError::InvalidFormat(format!(
+                    "Empty sequence identifier at line {}",
+                    line_number
+                )));
+            }
+
+            current_id = Some(id);
+            // Pre-allocate for typical sequence line (estimate ~10KB per sequence for alignments)
+            current_seq = Vec::with_capacity(10_000);
+        } else {
+            // Sequence line
+            if current_id.is_none() {
+                return Err(FastaError::SequenceWithoutHeader(line_number));
+            }
+
+            // Fast append: most FASTA lines don't have internal whitespace
+            if line.bytes().all(|b| !b.is_ascii_whitespace()) {
+                current_seq.extend_from_slice(line.as_bytes());
+            } else {
+                // Fallback: filter whitespace (rare case)
+                current_seq.extend(line.bytes().filter(|b| !b.is_ascii_whitespace()));
+            }
+        }
+    }
+
+    // Don't forget the last sequence
+    if let Some(id) = current_id {
+        if !current_seq.is_empty() {
+            sequences.push(Sequence::from_bytes(id, current_seq));
+        }
+    }
+
+    if sequences.is_empty() {
+        return Err(FastaError::EmptyFile);
+    }
+
+    Ok(Alignment::new(sequences))
 }
 
 /// Parses FASTA content from a reader.
@@ -69,7 +153,7 @@ pub fn parse_fasta_file<P: AsRef<Path>>(path: P) -> FastaResult<Alignment> {
 pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
     let mut sequences = Vec::new();
     let mut current_id: Option<String> = None;
-    let mut current_seq = String::new();
+    let mut current_seq: Vec<u8> = Vec::new();
     let mut line_number = 0;
 
     for line_result in reader.lines() {
@@ -86,7 +170,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
             // Save previous sequence if exists
             if let Some(id) = current_id.take() {
                 if !current_seq.is_empty() {
-                    sequences.push(Sequence::new(id, std::mem::take(&mut current_seq)));
+                    sequences.push(Sequence::from_bytes(id, std::mem::take(&mut current_seq)));
                 }
             }
 
@@ -106,7 +190,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
             }
 
             current_id = Some(id);
-            current_seq.clear();
+            current_seq = Vec::with_capacity(10_000);
         } else {
             // Sequence line
             if current_id.is_none() {
@@ -114,14 +198,18 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
             }
 
             // Append sequence data (removing any whitespace)
-            current_seq.push_str(&line.chars().filter(|c| !c.is_whitespace()).collect::<String>());
+            if line.bytes().all(|b| !b.is_ascii_whitespace()) {
+                current_seq.extend_from_slice(line.as_bytes());
+            } else {
+                current_seq.extend(line.bytes().filter(|b| !b.is_ascii_whitespace()));
+            }
         }
     }
 
     // Don't forget the last sequence
     if let Some(id) = current_id {
         if !current_seq.is_empty() {
-            sequences.push(Sequence::new(id, current_seq));
+            sequences.push(Sequence::from_bytes(id, current_seq));
         }
     }
 
@@ -136,7 +224,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
 ///
 /// Useful for testing or processing in-memory data.
 pub fn parse_fasta_str(content: &str) -> FastaResult<Alignment> {
-    parse_fasta(content.as_bytes())
+    parse_fasta_fast(content)
 }
 
 #[cfg(test)]
@@ -150,9 +238,9 @@ mod tests {
 
         assert_eq!(alignment.sequence_count(), 2);
         assert_eq!(alignment.get(0).unwrap().id, "seq1");
-        assert_eq!(alignment.get(0).unwrap().data, "ACGT");
+        assert_eq!(alignment.get(0).unwrap().as_str(), "ACGT");
         assert_eq!(alignment.get(1).unwrap().id, "seq2");
-        assert_eq!(alignment.get(1).unwrap().data, "TGCA");
+        assert_eq!(alignment.get(1).unwrap().as_str(), "TGCA");
     }
 
     #[test]
@@ -161,7 +249,7 @@ mod tests {
         let alignment = parse_fasta_str(content).unwrap();
 
         assert_eq!(alignment.sequence_count(), 1);
-        assert_eq!(alignment.get(0).unwrap().data, "ACGTTGCAAAAA");
+        assert_eq!(alignment.get(0).unwrap().as_str(), "ACGTTGCAAAAA");
     }
 
     #[test]
@@ -178,8 +266,8 @@ mod tests {
         let alignment = parse_fasta_str(content).unwrap();
 
         assert_eq!(alignment.sequence_count(), 2);
-        assert_eq!(alignment.get(0).unwrap().data, "ACGT");
-        assert_eq!(alignment.get(1).unwrap().data, "TGCA");
+        assert_eq!(alignment.get(0).unwrap().as_str(), "ACGT");
+        assert_eq!(alignment.get(1).unwrap().as_str(), "TGCA");
     }
 
     #[test]
@@ -215,6 +303,6 @@ mod tests {
         let content = ">seq1\nacgt\n";
         let alignment = parse_fasta_str(content).unwrap();
         // Preserves case as-is
-        assert_eq!(alignment.get(0).unwrap().data, "acgt");
+        assert_eq!(alignment.get(0).unwrap().as_str(), "acgt");
     }
 }

@@ -17,6 +17,10 @@
 //! - `:q`: Quit
 //! - `:123`: Jump to column 123
 
+// Use jemalloc for better memory management (returns memory to OS)
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;

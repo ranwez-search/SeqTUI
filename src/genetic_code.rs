@@ -5,8 +5,6 @@
 //! - Codon to amino acid translation
 //! - Support for different reading frames
 
-use std::collections::HashMap;
-
 /// A genetic code table for translating codons to amino acids.
 #[derive(Debug, Clone)]
 pub struct GeneticCode {
@@ -14,8 +12,22 @@ pub struct GeneticCode {
     pub id: u8,
     /// Name of the genetic code
     pub name: String,
-    /// Codon to amino acid mapping (64 entries for standard codons)
-    codon_table: HashMap<String, char>,
+    /// Codon to amino acid mapping as flat array (64 entries)
+    /// Index = base1_idx * 16 + base2_idx * 4 + base3_idx
+    /// where T=0, C=1, A=2, G=3
+    codon_table: [u8; 64],
+}
+
+/// Convert nucleotide to index: T/U=0, C=1, A=2, G=3, invalid=255
+#[inline(always)]
+fn base_to_index(b: u8) -> u8 {
+    match b {
+        b'T' | b't' | b'U' | b'u' => 0,
+        b'C' | b'c' => 1,
+        b'A' | b'a' => 2,
+        b'G' | b'g' => 3,
+        _ => 255,
+    }
 }
 
 impl GeneticCode {
@@ -26,20 +38,12 @@ impl GeneticCode {
     /// * `name` - Name of the genetic code
     /// * `ncbieaa` - 64-character string of amino acids (NCBI format)
     fn new(id: u8, name: &str, ncbieaa: &str) -> Self {
-        let bases = ['T', 'C', 'A', 'G'];
-        let mut codon_table = HashMap::new();
-        
         // NCBI order: TTT, TTC, TTA, TTG, TCT, TCC, ... (Base1, Base2, Base3)
-        let mut idx = 0;
-        for &b1 in &bases {
-            for &b2 in &bases {
-                for &b3 in &bases {
-                    let codon = format!("{}{}{}", b1, b2, b3);
-                    let aa = ncbieaa.chars().nth(idx).unwrap_or('X');
-                    codon_table.insert(codon, aa);
-                    idx += 1;
-                }
-            }
+        // This matches our index calculation: T=0, C=1, A=2, G=3
+        let mut codon_table = [b'X'; 64];
+        let aa_bytes = ncbieaa.as_bytes();
+        for (i, &aa) in aa_bytes.iter().enumerate().take(64) {
+            codon_table[i] = aa;
         }
         
         Self {
@@ -49,7 +53,7 @@ impl GeneticCode {
         }
     }
     
-    /// Translates a single codon to an amino acid.
+    /// Translates a single codon (3 bytes) to an amino acid.
     /// 
     /// # Rules:
     /// - Standard codons (3 nucleotides) are translated using the genetic code
@@ -57,64 +61,82 @@ impl GeneticCode {
     /// - Codons with gaps (-) or frameshifts (!) follow special rules:
     ///   - All gaps/frameshifts (e.g., "---", "!!!") → '-'
     ///   - Mixed with nucleotides (e.g., "C-T", "A!G") → '!'
-    pub fn translate_codon(&self, codon: &str) -> char {
+    #[inline]
+    pub fn translate_codon(&self, codon: &[u8]) -> u8 {
         if codon.len() != 3 {
-            return 'X';
+            return b'X';
         }
         
-        let codon_upper: String = codon.to_uppercase();
-        let chars: Vec<char> = codon_upper.chars().collect();
+        let b1 = codon[0];
+        let b2 = codon[1];
+        let b3 = codon[2];
         
         // Check for gaps and frameshifts
-        let gap_or_frameshift: Vec<bool> = chars.iter()
-            .map(|&c| c == '-' || c == '!' || c == '.')
-            .collect();
+        let is_gap = |b: u8| b == b'-' || b == b'!' || b == b'.';
+        let g1 = is_gap(b1);
+        let g2 = is_gap(b2);
+        let g3 = is_gap(b3);
         
         // All gaps/frameshifts → gap
-        if gap_or_frameshift.iter().all(|&b| b) {
-            return '-';
+        if g1 && g2 && g3 {
+            return b'-';
         }
         
         // Mixed gaps/frameshifts with nucleotides → frameshift
-        if gap_or_frameshift.iter().any(|&b| b) {
-            return '!';
+        if g1 || g2 || g3 {
+            return b'!';
         }
         
-        // Convert U to T for RNA
-        let codon_dna: String = chars.iter()
-            .map(|&c| if c == 'U' { 'T' } else { c })
-            .collect();
+        // Convert to indices (handles case and U→T)
+        let i1 = base_to_index(b1);
+        let i2 = base_to_index(b2);
+        let i3 = base_to_index(b3);
         
-        // Check for valid nucleotides
-        let valid_nucleotides = codon_dna.chars().all(|c| matches!(c, 'A' | 'C' | 'G' | 'T'));
-        
-        if !valid_nucleotides {
-            return 'X'; // Ambiguous nucleotide
+        // Check for invalid/ambiguous nucleotides
+        if i1 == 255 || i2 == 255 || i3 == 255 {
+            return b'X';
         }
         
-        // Look up in codon table
-        self.codon_table.get(&codon_dna).copied().unwrap_or('X')
+        // Direct array lookup: O(1)
+        let idx = (i1 as usize) * 16 + (i2 as usize) * 4 + (i3 as usize);
+        self.codon_table[idx]
+    }
+    
+    /// Translates a single codon string to an amino acid char (convenience wrapper).
+    pub fn translate_codon_str(&self, codon: &str) -> char {
+        self.translate_codon(codon.as_bytes()) as char
     }
     
     /// Translates an entire nucleotide sequence to amino acids.
     /// 
     /// # Arguments
-    /// * `sequence` - The nucleotide sequence to translate
+    /// * `sequence` - The nucleotide sequence as bytes
     /// * `frame` - Reading frame (0, 1, or 2 for +1, +2, +3)
-    pub fn translate_sequence(&self, sequence: &str, frame: usize) -> String {
-        let chars: Vec<char> = sequence.chars().collect();
-        let mut result = String::new();
-        
+    /// 
+    /// Returns the translated amino acids as a Vec<u8>.
+    pub fn translate_sequence(&self, sequence: &[u8], frame: usize) -> Vec<u8> {
+        let len = sequence.len();
         let start = frame.min(2);
-        let mut pos = start;
         
-        while pos + 3 <= chars.len() {
-            let codon: String = chars[pos..pos+3].iter().collect();
-            result.push(self.translate_codon(&codon));
+        // Pre-allocate result with exact capacity
+        let num_codons = (len.saturating_sub(start)) / 3;
+        let mut result = Vec::with_capacity(num_codons);
+        
+        let mut pos = start;
+        while pos + 3 <= len {
+            result.push(self.translate_codon(&sequence[pos..pos+3]));
             pos += 3;
         }
         
         result
+    }
+    
+    /// Translates a nucleotide sequence string to amino acids string.
+    /// Convenience wrapper for translate_sequence.
+    pub fn translate_sequence_str(&self, sequence: &str, frame: usize) -> String {
+        let result = self.translate_sequence(sequence.as_bytes(), frame);
+        // SAFETY: All amino acid chars are valid ASCII/UTF-8
+        unsafe { String::from_utf8_unchecked(result) }
     }
 }
 
@@ -218,12 +240,12 @@ mod tests {
         let standard = codes.default_code();
         
         // Test some common codons
-        assert_eq!(standard.translate_codon("ATG"), 'M'); // Start codon
-        assert_eq!(standard.translate_codon("TAA"), '*'); // Stop codon
-        assert_eq!(standard.translate_codon("TAG"), '*'); // Stop codon
-        assert_eq!(standard.translate_codon("TGA"), '*'); // Stop codon
-        assert_eq!(standard.translate_codon("TTT"), 'F'); // Phenylalanine
-        assert_eq!(standard.translate_codon("GGG"), 'G'); // Glycine
+        assert_eq!(standard.translate_codon_str("ATG"), 'M'); // Start codon
+        assert_eq!(standard.translate_codon_str("TAA"), '*'); // Stop codon
+        assert_eq!(standard.translate_codon_str("TAG"), '*'); // Stop codon
+        assert_eq!(standard.translate_codon_str("TGA"), '*'); // Stop codon
+        assert_eq!(standard.translate_codon_str("TTT"), 'F'); // Phenylalanine
+        assert_eq!(standard.translate_codon_str("GGG"), 'G'); // Glycine
     }
     
     #[test]
@@ -232,8 +254,8 @@ mod tests {
         let standard = codes.default_code();
         
         // U should be treated as T
-        assert_eq!(standard.translate_codon("AUG"), 'M');
-        assert_eq!(standard.translate_codon("UUU"), 'F');
+        assert_eq!(standard.translate_codon_str("AUG"), 'M');
+        assert_eq!(standard.translate_codon_str("UUU"), 'F');
     }
     
     #[test]
@@ -242,15 +264,15 @@ mod tests {
         let standard = codes.default_code();
         
         // All gaps → gap
-        assert_eq!(standard.translate_codon("---"), '-');
-        assert_eq!(standard.translate_codon("!!!"), '-');
-        assert_eq!(standard.translate_codon("-!-"), '-');
+        assert_eq!(standard.translate_codon_str("---"), '-');
+        assert_eq!(standard.translate_codon_str("!!!"), '-');
+        assert_eq!(standard.translate_codon_str("-!-"), '-');
         
         // Mixed → frameshift
-        assert_eq!(standard.translate_codon("A--"), '!');
-        assert_eq!(standard.translate_codon("-T-"), '!');
-        assert_eq!(standard.translate_codon("AT-"), '!');
-        assert_eq!(standard.translate_codon("A!G"), '!');
+        assert_eq!(standard.translate_codon_str("A--"), '!');
+        assert_eq!(standard.translate_codon_str("-T-"), '!');
+        assert_eq!(standard.translate_codon_str("AT-"), '!');
+        assert_eq!(standard.translate_codon_str("A!G"), '!');
     }
     
     #[test]
@@ -259,9 +281,9 @@ mod tests {
         let standard = codes.default_code();
         
         // Ambiguous nucleotides → X
-        assert_eq!(standard.translate_codon("ATN"), 'X');
-        assert_eq!(standard.translate_codon("NNN"), 'X');
-        assert_eq!(standard.translate_codon("CTR"), 'X'); // R = A or G
+        assert_eq!(standard.translate_codon_str("ATN"), 'X');
+        assert_eq!(standard.translate_codon_str("NNN"), 'X');
+        assert_eq!(standard.translate_codon_str("CTR"), 'X'); // R = A or G
     }
     
     #[test]
@@ -270,16 +292,16 @@ mod tests {
         let standard = codes.default_code();
         
         let seq = "ATGTTTTAG"; // M, F, *
-        assert_eq!(standard.translate_sequence(seq, 0), "MF*");
+        assert_eq!(standard.translate_sequence_str(seq, 0), "MF*");
         
         // Different frames
         let seq = "AATGTTTTAG"; // 10 characters
         // Frame 0: AAT GTT TTA G → N, V, L (incomplete G not translated)
-        assert_eq!(standard.translate_sequence(seq, 0), "NVL");
+        assert_eq!(standard.translate_sequence_str(seq, 0), "NVL");
         // Frame 1: ATG TTT TAG → M, F, *
-        assert_eq!(standard.translate_sequence(seq, 1), "MF*");
+        assert_eq!(standard.translate_sequence_str(seq, 1), "MF*");
         // Frame 2: TGT TTT AG → C, F (incomplete AG not translated)
-        assert_eq!(standard.translate_sequence(seq, 2), "CF");
+        assert_eq!(standard.translate_sequence_str(seq, 2), "CF");
     }
     
     #[test]
@@ -287,8 +309,8 @@ mod tests {
         let codes = GeneticCodes::new();
         let standard = codes.default_code();
         
-        assert_eq!(standard.translate_codon("atg"), 'M');
-        assert_eq!(standard.translate_codon("AtG"), 'M');
+        assert_eq!(standard.translate_codon_str("atg"), 'M');
+        assert_eq!(standard.translate_codon_str("AtG"), 'M');
     }
     
     #[test]
@@ -297,10 +319,10 @@ mod tests {
         
         // In standard code, TGA is stop
         let standard = codes.get(1).unwrap();
-        assert_eq!(standard.translate_codon("TGA"), '*');
+        assert_eq!(standard.translate_codon_str("TGA"), '*');
         
         // In vertebrate mitochondrial (code 2), TGA is Trp (W)
         let vert_mito = codes.get(2).unwrap();
-        assert_eq!(vert_mito.translate_codon("TGA"), 'W');
+        assert_eq!(vert_mito.translate_codon_str("TGA"), 'W');
     }
 }

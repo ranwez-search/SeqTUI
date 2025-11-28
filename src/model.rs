@@ -21,47 +21,78 @@ pub enum SequenceType {
 }
 
 /// Represents a single sequence with its identifier and data.
+/// 
+/// Sequence data is stored as `Vec<u8>` (ASCII bytes) rather than `String`
+/// for efficiency - biological sequences only use ASCII characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sequence {
     /// The sequence identifier (from FASTA header, without '>')
     pub id: String,
-    /// The sequence data (nucleotides or amino acids)
-    pub data: String,
+    /// The sequence data as ASCII bytes (nucleotides or amino acids)
+    data: Vec<u8>,
 }
 
 impl Sequence {
-    /// Creates a new sequence.
-    pub fn new(id: impl Into<String>, data: impl Into<String>) -> Self {
+    /// Creates a new sequence from a string.
+    pub fn new(id: impl Into<String>, data: impl AsRef<str>) -> Self {
         Self {
             id: id.into(),
-            data: data.into(),
+            data: data.as_ref().as_bytes().to_vec(),
+        }
+    }
+
+    /// Creates a new sequence from raw bytes (zero-copy when possible).
+    pub fn from_bytes(id: impl Into<String>, data: Vec<u8>) -> Self {
+        Self {
+            id: id.into(),
+            data,
         }
     }
 
     /// Returns the length of the sequence.
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Returns true if the sequence is empty.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Gets a character at a specific position.
-    /// 
-    /// This uses byte indexing for O(1) performance, which is safe for
-    /// DNA/amino acid sequences that are always ASCII.
+    /// Gets a character at a specific position (O(1) direct byte access).
+    #[inline]
     pub fn char_at(&self, pos: usize) -> Option<char> {
-        // Use byte indexing for O(1) access - safe for ASCII sequences
-        self.data.as_bytes().get(pos).map(|&b| b as char)
+        self.data.get(pos).map(|&b| b as char)
     }
 
-    /// Gets a slice of the sequence data.
+    /// Gets a byte at a specific position.
+    #[inline]
+    pub fn byte_at(&self, pos: usize) -> Option<u8> {
+        self.data.get(pos).copied()
+    }
+
+    /// Gets the raw bytes of the sequence.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Gets a slice of the sequence data as a string.
+    /// This is safe because biological sequences are always ASCII.
     pub fn slice(&self, range: Range<usize>) -> &str {
         let start = range.start.min(self.data.len());
         let end = range.end.min(self.data.len());
-        &self.data[start..end]
+        // SAFETY: Biological sequences are always valid ASCII/UTF-8
+        unsafe { std::str::from_utf8_unchecked(&self.data[start..end]) }
+    }
+
+    /// Gets the entire sequence as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        // SAFETY: Biological sequences are always valid ASCII/UTF-8
+        unsafe { std::str::from_utf8_unchecked(&self.data) }
     }
 }
 
@@ -108,15 +139,15 @@ impl Alignment {
 
         // Sample up to first 1000 characters across sequences
         'outer: for seq in sequences {
-            for c in seq.data.chars() {
-                let upper = c.to_ascii_uppercase();
+            for &b in seq.as_bytes() {
+                let upper = b.to_ascii_uppercase();
                 // Skip gaps and unknown
-                if upper == '-' || upper == '.' || upper == ' ' {
+                if upper == b'-' || upper == b'.' || upper == b' ' {
                     continue;
                 }
                 total_chars += 1;
                 // Nucleotide characters (including U for RNA and N for unknown)
-                if matches!(upper, 'A' | 'C' | 'G' | 'T' | 'U' | 'N') {
+                if matches!(upper, b'A' | b'C' | b'G' | b'T' | b'U' | b'N') {
                     nucleotide_chars += 1;
                 }
                 // Sample enough characters
@@ -318,8 +349,8 @@ pub struct AppState {
     pub file_name: String,
     /// The original loaded alignment (always nucleotide if translated)
     pub alignment: Alignment,
-    /// The translated alignment (if viewing as AA)
-    pub translated_alignment: Option<Alignment>,
+    /// The translated alignment (if viewing as AA) - lazily computed
+    translated_alignment: Option<Alignment>,
     /// Current view mode
     pub view_mode: ViewMode,
     /// Translation settings
@@ -375,6 +406,11 @@ impl AppState {
             ViewMode::Nucleotide => &self.alignment,
             ViewMode::AminoAcid => self.translated_alignment.as_ref().unwrap_or(&self.alignment),
         }
+    }
+
+    /// Returns whether a translated alignment exists.
+    pub fn has_translated_alignment(&self) -> bool {
+        self.translated_alignment.is_some()
     }
 
     /// Updates the viewport size based on terminal dimensions.
@@ -579,6 +615,10 @@ impl AppState {
         self.cursor.col = nt_col.min(self.alignment.alignment_length().saturating_sub(1));
         
         self.view_mode = ViewMode::Nucleotide;
+        
+        // Free the translated alignment to save memory
+        self.translated_alignment = None;
+        
         self.ensure_cursor_visible();
         self.status_message = Some("Switched to nucleotide view".to_string());
     }
@@ -593,11 +633,12 @@ impl AppState {
             .unwrap_or_else(|| codes.default_code());
         let frame = self.translation_settings.frame as usize;
         
-        // Translate all sequences
-        let translated_seqs: Vec<crate::model::Sequence> = self.alignment.sequences.iter()
+        // Translate all sequences (single-threaded - fast enough now)
+        let translated_seqs: Vec<crate::model::Sequence> = self.alignment.sequences
+            .iter()
             .map(|seq| {
-                let aa_data = code.translate_sequence(&seq.data, frame);
-                Sequence::new(seq.id.clone(), aa_data)
+                let aa_data = code.translate_sequence(seq.as_bytes(), frame);
+                Sequence::from_bytes(seq.id.clone(), aa_data)
             })
             .collect();
         
@@ -896,8 +937,9 @@ impl AppState {
         let alignment = self.active_alignment();
         if let Some(seq) = alignment.get(start_row) {
             let search_start = start_col + 1; // Start after current position
-            if search_start < seq.data.len() {
-                if let Some(pos) = seq.data[search_start..].to_uppercase().find(&pattern_upper) {
+            if search_start < seq.len() {
+                let seq_str = seq.as_str();
+                if let Some(pos) = seq_str[search_start..].to_uppercase().find(&pattern_upper) {
                     self.cursor.col = search_start + pos;
                     self.ensure_cursor_visible();
                     self.status_message = Some(format!("/{}", pattern));
@@ -925,7 +967,7 @@ impl AppState {
                     return;
                 }
                 // Then check sequence data
-                if let Some(pos) = seq.data.to_uppercase().find(&pattern_upper) {
+                if let Some(pos) = seq.as_str().to_uppercase().find(&pattern_upper) {
                     self.cursor.row = row;
                     self.cursor.col = pos;
                     self.ensure_cursor_visible();
@@ -961,7 +1003,7 @@ impl AppState {
         let alignment = self.active_alignment();
         if let Some(seq) = alignment.get(start_row) {
             if start_col > 0 {
-                let search_area = &seq.data[..start_col];
+                let search_area = &seq.as_str()[..start_col];
                 if let Some(pos) = search_area.to_uppercase().rfind(&pattern_upper) {
                     self.cursor.col = pos;
                     self.ensure_cursor_visible();
@@ -984,7 +1026,7 @@ impl AppState {
             let alignment = self.active_alignment();
             if let Some(seq) = alignment.get(row) {
                 // First check sequence data (from end)
-                if let Some(pos) = seq.data.to_uppercase().rfind(&pattern_upper) {
+                if let Some(pos) = seq.as_str().to_uppercase().rfind(&pattern_upper) {
                     self.cursor.row = row;
                     self.cursor.col = pos;
                     self.ensure_cursor_visible();
@@ -1023,7 +1065,7 @@ mod tests {
     fn test_sequence_creation() {
         let seq = Sequence::new("seq1", "ACGT");
         assert_eq!(seq.id, "seq1");
-        assert_eq!(seq.data, "ACGT");
+        assert_eq!(seq.as_str(), "ACGT");
         assert_eq!(seq.len(), 4);
     }
 

@@ -2,7 +2,7 @@
 name = "seqtui"
 version = "0.1.0"
 edition = "2021"
-authors = ["SeqTUI Team"]
+authors = ["V. Ranwez"]
 description = "A terminal-based alignment viewer for FASTA sequences"
 license = "MIT"
 readme = "README.md"
@@ -18,6 +18,9 @@ thiserror = "1.0"
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
+
+# Memory allocator (better memory return to OS)
+tikv-jemallocator = "0.6"
 
 [dev-dependencies]
 tempfile = "3.10"
