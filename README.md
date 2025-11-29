@@ -1,10 +1,10 @@
 # SeqTUI - Terminal Alignment Viewer
 
-A terminal-based viewer for FASTA sequence alignments written in Rust using [ratatui](https://ratatui.rs/).
+A terminal-based viewer for sequence alignments written in Rust using [ratatui](https://ratatui.rs/).
 
 ## Features
 
-- 🧬 **FASTA Support**: Load and visualize aligned DNA/RNA and protein sequences
+- 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
 - 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
   - **Nucleotides**: A (Red), C (Green), G (Yellow), T/U (Blue)
   - **Amino Acids**: Seaview-style coloring by chemical properties
@@ -30,12 +30,26 @@ cargo install --path .
 ## Usage
 
 ```bash
-# View an alignment
+# View an alignment (format auto-detected from extension)
 seqtui sequences.fasta
+seqtui alignment.phy
+seqtui data.nex
+
+# Force a specific format
+seqtui -f nexus myfile.txt
+seqtui -f phylip alignment.dat
 
 # Or run with cargo
 cargo run -- sequences.fasta
 ```
+
+## Supported Formats
+
+| Format | Extensions | Features |
+|--------|------------|----------|
+| **FASTA** | `.fasta`, `.fa`, `.fna`, `.faa`, `.fas` | Multi-line sequences |
+| **PHYLIP** | `.phy`, `.phylip` | Sequential and interleaved |
+| **NEXUS** | `.nex`, `.nexus`, `.nxs` | DATA/CHARACTERS blocks, MATCHCHAR support |
 
 ## Navigation
 
@@ -99,6 +113,10 @@ src/
 ├── lib.rs          # Module exports
 ├── model.rs        # Data structures (Sequence, Alignment, Viewport, AppState)
 ├── fasta.rs        # FASTA file parsing
+├── formats/        # Multi-format support
+│   ├── mod.rs      # Format detection and unified parsing
+│   ├── nexus.rs    # NEXUS format parser (token-based)
+│   └── phylip.rs   # PHYLIP format parser
 ├── event.rs        # Keyboard event handling
 ├── ui.rs           # TUI rendering with ratatui
 ├── controller.rs   # Main application loop
@@ -108,11 +126,12 @@ src/
 ## Development
 
 ```bash
-# Run tests
+# Run tests (74+ tests covering all formats)
 cargo test
 
 # Run with test data
 cargo run -- test_data/alignment.fasta
+cargo run -- test_data/LOC_01790.nex
 
 # Build release version
 cargo build --release

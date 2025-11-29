@@ -7,26 +7,22 @@
 //! The application follows an event-driven architecture with clear separation:
 //! - `model`: Data structures for sequences, viewport, and application state
 //! - `fasta`: FASTA file parsing and validation
+//! - `formats`: Multi-format parsing (FASTA, PHYLIP, NEXUS)
 //! - `event`: Keyboard event handling (Vim-style navigation)
 //! - `ui`: TUI rendering with ratatui
 //! - `controller`: Orchestration of state transitions
 //! - `genetic_code`: NCBI genetic codes and translation logic
 //!
-//! ## Future Extensions
+//! ## Supported File Formats
 //!
-//! The architecture is designed to support:
-//! - Amino acid color schemes
-//! - Large alignment handling
-//! - Pattern search
-//! - Column navigation via `:number`
-//! - File browser panel
-//! - Sequence/site filtering
-//! - Codon coloring and NT to AA translation
-//! - Export current view as FASTA
+//! - FASTA (.fasta, .fa, .fna, .faa)
+//! - PHYLIP (.phy, .phylip) - sequential and interleaved
+//! - NEXUS (.nex, .nexus, .nxs)
 
 pub mod controller;
 pub mod event;
 pub mod fasta;
+pub mod formats;
 pub mod genetic_code;
 pub mod model;
 pub mod ui;

@@ -12,8 +12,9 @@ architecture choices, and lessons learned during development.
 PROJECT GOAL
 ================================================================================
 
-SeqTUI aims to be a fast, memory-efficient terminal viewer for large FASTA 
-sequence alignments, inspired by Seaview but for the terminal. Key goals:
+SeqTUI aims to be a fast, memory-efficient terminal viewer for large 
+sequence alignments (FASTA, PHYLIP, NEXUS), inspired by Seaview but for 
+the terminal. Key goals:
 
 1. Handle very large files (500MB+, millions of nucleotides per sequence)
 2. Vim-style navigation for bioinformaticians comfortable with CLI
@@ -32,6 +33,10 @@ src/
 ├── lib.rs          - Module exports
 ├── model.rs        - Core data structures and application state
 ├── fasta.rs        - FASTA parsing with memory optimization
+├── formats/        - Multi-format support module
+│   ├── mod.rs      - Format detection (extension + content) and unified API
+│   ├── nexus.rs    - NEXUS parser (token-based per spec)
+│   └── phylip.rs   - PHYLIP parser (sequential + interleaved)
 ├── event.rs        - Keyboard input handling (Action enum, apply_action)
 ├── ui.rs           - TUI rendering with ratatui
 ├── controller.rs   - Main loop connecting events to state to rendering
@@ -191,6 +196,57 @@ Amino acids (Seaview-style, grouped by chemical property):
 FILE HANDLING
 ================================================================================
 
+Multi-format support with auto-detection:
+
+FORMAT DETECTION STRATEGY (in parse_file_with_options):
+-------------------------------------------------------
+
+The detection follows a cascading fallback strategy:
+
+1. EXPLICIT FORMAT (-f/--format option)
+   If user specifies -f nexus, we use NEXUS parser directly.
+   If parsing fails, we return the error (no fallback).
+
+2. FILE EXTENSION (if no -f option)
+   We try the parser matching the extension (.fasta → FASTA parser).
+   IMPORTANT: If extension-based parsing FAILS, we SILENTLY fall through
+   to content detection. No warning is displayed.
+   
+   Example: seq.fasta containing NEXUS data
+   - Try FASTA parser (fails because #NEXUS is not a valid FASTA header)
+   - Fall through to step 3
+
+3. CONTENT-BASED DETECTION
+   Examine first non-empty line:
+   - Starts with "#NEXUS" (case-insensitive) → NEXUS
+   - Starts with ">" → FASTA  
+   - Two integers (ntax nchar) → PHYLIP
+   
+   If detected, parse with that format.
+   If parsing fails, return the error (no further fallback).
+
+4. TRY ALL PARSERS (last resort)
+   If content detection returns None, try each parser in order:
+   FASTA → NEXUS → PHYLIP
+   Return first success, or UnknownFormat error if all fail.
+
+CURRENT BEHAVIOR SUMMARY:
+- Extension is a HINT, not authoritative
+- Extension mismatch produces NO warning (silent fallback)
+- Content signature is trusted when found
+- User can always override with -f/--format
+
+POTENTIAL IMPROVEMENT:
+Could add warning when extension doesn't match detected/successful format:
+  "Warning: file.fasta was parsed as NEXUS (extension suggests FASTA)"
+Currently NOT implemented - parsing succeeds silently.
+
+Format detection priority:
+1. Explicit -f/--format CLI option (fasta, phylip, nexus, auto)
+2. File extension (.fasta, .phy, .nex, etc.) - with silent fallback on failure
+3. Content detection (looks for format signatures)
+4. Try all parsers as fallback
+
 FASTA parsing handles:
 - Standard multi-line FASTA
 - Lines starting with > are headers
@@ -198,18 +254,39 @@ FASTA parsing handles:
 - Automatic uppercase conversion
 - Warning if sequences have different lengths (invalid alignment)
 
+PHYLIP parsing handles:
+- Sequential format (all of sequence on consecutive lines)
+- Interleaved format (detected by line count vs NCHAR)
+- Relaxed names (any length, not just 10 chars)
+- Strict 10-char names for legacy files
+
+NEXUS parsing handles:
+- Token-based parsing per NEXUS specification
+- DATA and CHARACTERS blocks
+- Sequential and INTERLEAVE formats
+- MATCHCHAR substitution (e.g., '.' = same as reference sequence)
+- Multi-line FORMAT commands
+- Inline comments like [1], [annotation]
+- Case-insensitive commands
+- Quoted sequence names
+
 Edge cases:
 - Empty files: Error
-- Files without headers: Creates "Unknown" sequence
+- Files without headers: Creates "Unknown" sequence (FASTA)
 - Very long lines: Handled (bulk read approach)
+- Unknown format: Helpful error with format hints
 
 ================================================================================
 TESTING
 ================================================================================
 
-48 unit tests covering:
+74+ unit tests covering:
 - Event handling and key mappings
 - FASTA parsing edge cases
+- PHYLIP parsing (sequential, interleaved, relaxed names)
+- NEXUS parsing (simple, interleaved, quoted names, MATCHCHAR)
+- Format detection (extension, content, fallback)
+- Real-world file tests (LOC_01790.nex with 27 sequences)
 - Genetic code translation
 - Model state transitions
 - Color assignments
@@ -274,5 +351,7 @@ Key files to review when resuming:
 2. src/model.rs - Core state and data structures  
 3. src/event.rs - Action definitions and key handling
 4. src/genetic_code.rs - Translation logic
+5. src/formats/mod.rs - Format detection and unified parsing API
+6. src/formats/nexus.rs - Token-based NEXUS parser
 
 ================================================================================

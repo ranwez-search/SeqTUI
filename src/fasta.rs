@@ -78,7 +78,7 @@ pub fn parse_fasta_file<P: AsRef<Path>>(path: P) -> FastaResult<Alignment> {
 
 /// Fast FASTA parser that works on a pre-loaded string.
 /// Avoids per-line allocations by working with slices and bytes.
-fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
+pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
     // Estimate number of sequences (rough: one per 1KB on average for alignments)
     let estimated_seqs = (content.len() / 1000).max(10);
     let mut sequences = Vec::with_capacity(estimated_seqs);
