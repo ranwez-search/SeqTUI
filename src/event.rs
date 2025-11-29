@@ -120,6 +120,12 @@ pub enum Action {
     PageDown,
     /// Pending 'z' key for z-commands
     PendingZ,
+    /// Move to start of next word (w)
+    WordForward,
+    /// Move to start of previous word (b)
+    WordBackward,
+    /// Move to end of current/next word (e)
+    WordEnd,
 }
 
 /// Polls for keyboard events with a timeout.
@@ -237,6 +243,11 @@ fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
         KeyCode::Char('k') => Action::MoveUp,
         KeyCode::Char('l') => Action::MoveRight,
         KeyCode::Char('h') => Action::MoveLeft,
+
+        // Word movements (gaps and stops are delimiters)
+        KeyCode::Char('w') => Action::WordForward,
+        KeyCode::Char('b') => Action::WordBackward,
+        KeyCode::Char('e') => Action::WordEnd,
 
         // Alternative arrow keys for convenience
         KeyCode::Up => Action::MoveUp,
@@ -461,6 +472,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::PendingZ => {
             state.set_pending_z();
+        }
+        Action::WordForward => {
+            state.word_forward();
+        }
+        Action::WordBackward => {
+            state.word_backward();
+        }
+        Action::WordEnd => {
+            state.word_end();
         }
     }
 

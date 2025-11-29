@@ -3,7 +3,7 @@ name = "seqtui"
 version = "0.1.0"
 edition = "2021"
 authors = ["V. Ranwez"]
-description = "A terminal-based alignment viewer for FASTA sequences"
+description = "A Vim-style terminal viewer for FASTA sequence alignments"
 license = "MIT"
 readme = "README.md"
 

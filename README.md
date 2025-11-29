@@ -10,11 +10,11 @@ A terminal-based viewer for FASTA sequence alignments written in Rust using [rat
   - **Amino Acids**: Seaview-style coloring by chemical properties
 - 🔄 **NT → AA Translation**: Translate nucleotide sequences to amino acids with 33 genetic codes
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling horizontally
-- ⌨️ **Vim-style Navigation**: Full Vim-like controls (h/j/k/l, Ctrl+U/D, zH/zL, g0/gm/g$)
+- ⌨️ **Vim-style Navigation**: Full Vim-like controls (h/j/k/l, w/b/e, Ctrl+U/D, g0/gm/g$)
 - 🖱️ **Arrow Navigation**: Shift+arrows for page/half-page scrolling
 - 🔍 **Pattern Search**: Search forward (`/`) and backward (`?`) in sequences and names
 - ❓ **Tabbed Help**: Press `:h` for organized help with 5 sections
-- 🚀 **Large File Support**: Optimized for 500MB+ alignments with jemalloc allocator
+- 🚀 **Large File Support**: Tested on 500MB+ alignments
 
 ## Installation
 
@@ -57,6 +57,7 @@ cargo run -- sequences.fasta
 | `0` / `$` | First / last column |
 | `g0` / `gm` / `g$` | First/middle/last visible column |
 | `<num>\|` | Go to column (e.g., `50\|`) |
+| `w` / `b` / `e` | Next/previous/end of word |
 
 ## Search
 
@@ -123,6 +124,21 @@ cargo build --release
 # On Linux or cross-compile
 cargo build --release --target x86_64-unknown-linux-gnu
 ```
+
+## Note
+
+⚠️ This is a side project developed with extensive use of AI assistants (GitHub Copilot and Claude Opus 4.5). It was my first "vibe coding" experiment. While functional, please use with appropriate caution and feel free to report any issues.
+
+## Related Projects & Inspiration
+
+SeqTUI was inspired by several great tools:
+
+- **[Seaview](https://doua.prabi.fr/software/seaview)** - The reference GUI alignment viewer. I'm a huge fan and it has many more features. SeqTUI was born from needing a quick alignment view when working on HPC clusters via terminal.
+- **[Vim](https://www.vim.org/)** - The navigation philosophy and keybindings
+- **[ratatui](https://ratatui.rs/)** - The excellent Rust TUI framework powering this app
+- **[Awesome ratatui](https://github.com/ratatui/awesome-ratatui)** - Inspiration from the ecosystem, especially:
+  - [termscp](https://github.com/veeso/termscp) - Terminal file transfer
+  - [tgv](https://github.com/chroma-pipeline/tgv) - Terminal genome viewer
 
 ## License
 

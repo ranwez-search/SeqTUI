@@ -379,6 +379,8 @@ pub struct TranslationSettings {
     pub selected_frame: usize,
     /// Scroll offset for the genetic code list
     pub scroll_offset: usize,
+    /// Whether user has translated at least once (to show settings on first use)
+    pub has_translated: bool,
 }
 
 impl Default for TranslationSettings {
@@ -389,6 +391,7 @@ impl Default for TranslationSettings {
             selected_code_index: 0,
             selected_frame: 0,
             scroll_offset: 0,
+            has_translated: false,
         }
     }
 }
@@ -555,6 +558,107 @@ impl AppState {
         self.ensure_cursor_visible();
     }
 
+    /// Returns true if a character is a word delimiter (gap or stop codon).
+    #[inline]
+    fn is_word_delimiter(c: u8) -> bool {
+        c == b'-' || c == b'*'
+    }
+
+    /// Moves to the start of the next word (w).
+    /// Words are delimited by gaps (-) and stops (*).
+    pub fn word_forward(&mut self) {
+        let alignment = self.active_alignment();
+        let aln_len = alignment.alignment_length();
+        if aln_len == 0 || self.cursor.row >= alignment.sequence_count() {
+            return;
+        }
+
+        let seq = alignment.sequences[self.cursor.row].as_bytes();
+        let mut col = self.cursor.col;
+
+        // If on a non-delimiter, skip to end of current word
+        if col < seq.len() && !Self::is_word_delimiter(seq[col]) {
+            while col < seq.len() && !Self::is_word_delimiter(seq[col]) {
+                col += 1;
+            }
+        }
+
+        // Skip delimiters to find start of next word
+        while col < seq.len() && Self::is_word_delimiter(seq[col]) {
+            col += 1;
+        }
+
+        // Clamp to valid range
+        self.cursor.col = col.min(aln_len.saturating_sub(1));
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves to the start of the previous word (b).
+    /// Words are delimited by gaps (-) and stops (*).
+    pub fn word_backward(&mut self) {
+        let alignment = self.active_alignment();
+        if alignment.alignment_length() == 0 || self.cursor.row >= alignment.sequence_count() {
+            return;
+        }
+
+        let seq = alignment.sequences[self.cursor.row].as_bytes();
+        let mut col = self.cursor.col;
+
+        // If at start, nothing to do
+        if col == 0 {
+            return;
+        }
+
+        // Move back one position first
+        col -= 1;
+
+        // Skip delimiters backward
+        while col > 0 && Self::is_word_delimiter(seq[col]) {
+            col -= 1;
+        }
+
+        // Now we're on a word character (or at position 0)
+        // Find the start of this word
+        while col > 0 && !Self::is_word_delimiter(seq[col - 1]) {
+            col -= 1;
+        }
+
+        self.cursor.col = col;
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves to the end of the current/next word (e).
+    /// Words are delimited by gaps (-) and stops (*).
+    pub fn word_end(&mut self) {
+        let alignment = self.active_alignment();
+        let aln_len = alignment.alignment_length();
+        if aln_len == 0 || self.cursor.row >= alignment.sequence_count() {
+            return;
+        }
+
+        let seq = alignment.sequences[self.cursor.row].as_bytes();
+        let mut col = self.cursor.col;
+
+        // Move forward at least one position
+        if col + 1 < seq.len() {
+            col += 1;
+        }
+
+        // Skip delimiters
+        while col < seq.len() && Self::is_word_delimiter(seq[col]) {
+            col += 1;
+        }
+
+        // Find end of this word
+        while col + 1 < seq.len() && !Self::is_word_delimiter(seq[col + 1]) {
+            col += 1;
+        }
+
+        // Clamp to valid range
+        self.cursor.col = col.min(aln_len.saturating_sub(1));
+        self.ensure_cursor_visible();
+    }
+
     /// Ensures the cursor is visible in the viewport, with centering behavior.
     fn ensure_cursor_visible(&mut self) {
         // Vertical scrolling - keep cursor in view
@@ -635,8 +739,16 @@ impl AppState {
                 "q" | "quit" => self.should_quit = true,
                 "h" | "help" => self.show_help(),
                 "asAA" | "asaa" => {
-                    self.enter_translation_settings();
-                    return; // Don't reset to Normal - enter_translation_settings sets the mode
+                    if self.alignment.sequence_type != SequenceType::Nucleotide {
+                        self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
+                    } else if !self.translation_settings.has_translated {
+                        // First time: show settings so user knows the options
+                        self.enter_translation_settings();
+                        return; // Don't reset to Normal
+                    } else {
+                        // Subsequent times: translate directly with saved settings
+                        self.switch_to_amino_acid_view();
+                    }
                 }
                 "asNT" | "asnt" => self.switch_to_nucleotide_view(),
                 "setcode" => {
@@ -754,6 +866,7 @@ impl AppState {
                 .unwrap_or(1)
         };
         self.translation_settings.frame = self.translation_settings.selected_frame;
+        self.translation_settings.has_translated = true;
         
         self.mode = AppMode::Normal;
         self.switch_to_amino_acid_view();

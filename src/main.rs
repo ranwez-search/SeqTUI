@@ -29,24 +29,18 @@ use seqtui::controller::run_app;
 use seqtui::fasta::parse_fasta_file;
 use seqtui::model::AppState;
 
-/// SeqTUI - Terminal Alignment Viewer
-///
-/// A terminal-based viewer for FASTA sequence alignments with Vim-style navigation
-/// and nucleotide color coding.
+/// SeqTUI - A Vim-style terminal viewer for FASTA sequence alignments
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// FASTA file(s) to display
-    #[arg(required = true)]
-    files: Vec<PathBuf>,
+    /// FASTA file to display
+    file: PathBuf,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // For now, we only support single file
-    // Future: support multiple files or directory browsing
-    let file_path = &args.files[0];
+    let file_path = &args.file;
 
     // Parse the FASTA file
     let alignment = parse_fasta_file(file_path)

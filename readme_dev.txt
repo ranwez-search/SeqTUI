@@ -89,9 +89,9 @@ These were critical for handling 500MB+ files (47 sequences × 11M nucleotides):
    - translate_sequence(&[u8]) -> Vec<u8> (no String intermediates)
 
 4. MEMORY ALLOCATOR: jemalloc (tikv-jemallocator)
-   - Rust's default allocator doesn't return freed memory to OS
-   - With jemalloc, memory drops from 665MB to 68MB after :asNT
-   - Critical for interactive use on memory-constrained systems
+   - In theory, helps return freed memory to OS
+   - In practice, the difference is minimal on modern systems
+   - Kept in case it helps on some HPC/cluster environments
 
 5. REMOVED: Parallel translation with rayon
    - Initially added for speed, but caused 15 threads overhead
@@ -225,7 +225,7 @@ Cargo.toml key dependencies:
 - crossterm: Terminal backend (cross-platform)
 - anyhow/thiserror: Error handling
 - clap: CLI argument parsing
-- tikv-jemallocator: Memory allocator (critical for large files)
+- tikv-jemallocator: Alternative memory allocator (kept for potential benefits)
 
 ================================================================================
 KNOWN ISSUES / FUTURE IMPROVEMENTS
@@ -243,7 +243,7 @@ Potential enhancements:
 Performance notes:
 - Initial load of 500MB file: ~2-3 seconds
 - Translation of 500MB: ~1 second
-- Memory with jemalloc: stable, properly released
+- Memory usage: stable during interactive use
 
 ================================================================================
 DEVELOPMENT WORKFLOW

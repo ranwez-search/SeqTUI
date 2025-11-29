@@ -417,6 +417,7 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from(Span::styled("VIM-STYLE NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
                 Line::from("  h / j / k / l  Move left/down/up/right"),
+                Line::from("  w / b / e      Next/prev/end of word"),
                 Line::from("  Ctrl+U / D     Half page up/down"),
                 Line::from("  zH / zL        Half page left/right"),
                 Line::from(""),
@@ -446,16 +447,18 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
             help_lines.extend(vec![
                 Line::from(Span::styled("TRANSLATION (NT → AA)", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
-                Line::from("  :asAA          Translate nucleotides to amino acids"),
+                Line::from("  :asAA          Translate (uses current settings)"),
                 Line::from("  :asNT          Switch back to nucleotide view"),
-                Line::from("  :setcode       Open translation settings"),
+                Line::from("  :setcode       Change genetic code and frame"),
                 Line::from(""),
-                Line::from(Span::styled("TRANSLATION SETTINGS (:setcode)", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from("  Default: Standard code (1), frame +1"),
+                Line::from("  Settings are remembered between translations."),
+                Line::from(""),
+                Line::from(Span::styled("SETTINGS DIALOG (:setcode)", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
                 Line::from("  ↑/↓ or j/k     Select genetic code (33 available)"),
                 Line::from("  ←/→ or h/l     Select reading frame (+1, +2, +3)"),
-                Line::from("  Enter          Confirm and translate"),
-                Line::from("  Esc            Cancel"),
+                Line::from("  Enter          Confirm       Esc  Cancel"),
             ]);
         }
     }
