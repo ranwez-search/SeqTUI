@@ -143,6 +143,19 @@ impl Sequence {
         &self.data
     }
 
+    /// Takes ownership of the sequence data (for thread transfer).
+    /// This avoids copying when the sequence won't be used again.
+    #[inline]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+
+    /// Clones the sequence data (when ownership transfer isn't possible).
+    #[inline]
+    pub fn clone_bytes(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+
     /// Gets a slice of the sequence data as a string.
     /// This is safe because biological sequences are always ASCII.
     pub fn slice(&self, range: Range<usize>) -> &str {

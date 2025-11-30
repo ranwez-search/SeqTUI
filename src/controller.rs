@@ -134,10 +134,17 @@ impl App {
         let genetic_code_id = self.state.translation_settings.genetic_code_id;
         let frame = self.state.translation_settings.frame;
         
+        // Get the genetic code before spawning (avoids recreating all codes in thread)
+        let codes = GeneticCodes::new();
+        let code = codes.get(genetic_code_id)
+            .unwrap_or_else(|| codes.default_code())
+            .clone(); // Clone just the one code we need (64 bytes + name)
+        
         // Clone the sequences for the background thread
+        // Unfortunately we need to copy the data since we can't share references across threads
         let sequences: Vec<(String, Vec<u8>)> = self.state.alignment.sequences
             .iter()
-            .map(|seq| (seq.id.clone(), seq.as_bytes().to_vec()))
+            .map(|seq| (seq.id.clone(), seq.clone_bytes()))
             .collect();
         
         let total = sequences.len();
@@ -155,10 +162,6 @@ impl App {
         
         // Spawn background thread for translation
         thread::spawn(move || {
-            let codes = GeneticCodes::new();
-            let code = codes.get(genetic_code_id)
-                .unwrap_or_else(|| codes.default_code());
-            
             let mut translated_seqs = Vec::with_capacity(total);
             let progress_interval = (total / 20).max(1); // Update every 5%
             
