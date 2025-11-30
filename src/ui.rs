@@ -278,14 +278,7 @@ fn render_sequences_panel(
 /// Renders the status bar at the bottom.
 fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     let alignment = state.active_alignment();
-    let (mode_str, command_str) = match &state.mode {
-        AppMode::Normal => ("NORMAL", String::new()),
-        AppMode::Command(cmd) => ("COMMAND", format!(":{}", cmd)),
-        AppMode::Search(pattern) => ("SEARCH", format!("/{}", pattern)),
-        AppMode::SearchBackward(pattern) => ("SEARCH", format!("?{}", pattern)),
-        AppMode::TranslationSettings => ("TRANSLATE", String::new()),
-    };
-
+    
     let position_info = format!(
         "Seq {}/{} | Col {}/{} ",
         state.cursor.row + 1,
@@ -294,33 +287,127 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
         alignment.alignment_length()
     );
 
-    // Show warning or status message if present
-    let message = state.status_message.as_deref().unwrap_or("");
-
-    let left_content = if command_str.is_empty() {
-        format!(" {} | {} ", mode_str, message)
-    } else {
-        format!(" {} | {} ", mode_str, command_str)
+    // Build status line based on mode
+    let status_line = match &state.mode {
+        AppMode::Normal => {
+            // Show status message or just NORMAL
+            let message = state.status_message.as_deref().unwrap_or("");
+            let left_content = format!(" NORMAL | {} ", message);
+            let left_len = left_content.len();
+            
+            Line::from(vec![
+                Span::styled(
+                    left_content,
+                    Style::default().fg(Color::Black).bg(Color::Cyan),
+                ),
+                Span::styled(
+                    " ".repeat((area.width as usize).saturating_sub(left_len + position_info.len())),
+                    Style::default().bg(Color::Cyan),
+                ),
+                Span::styled(
+                    position_info.clone(),
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        }
+        AppMode::Command(cmd) => {
+            // Mode label with cyan background, input area with white background + cursor
+            let mode_label = " COMMAND ";
+            let input_with_cursor = format!(":{}█", cmd);
+            let input_len = input_with_cursor.len() + 1; // +1 for space after
+            let mode_len = mode_label.len();
+            
+            Line::from(vec![
+                Span::styled(
+                    mode_label,
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {} ", input_with_cursor),
+                    Style::default().fg(Color::Black).bg(Color::White),
+                ),
+                Span::styled(
+                    " ".repeat((area.width as usize).saturating_sub(mode_len + input_len + 1 + position_info.len())),
+                    Style::default().bg(Color::Cyan),
+                ),
+                Span::styled(
+                    position_info.clone(),
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        }
+        AppMode::Search(pattern) => {
+            // Search forward mode
+            let mode_label = " SEARCH ";
+            let input_with_cursor = format!("/{}█", pattern);
+            let input_len = input_with_cursor.len() + 1;
+            let mode_len = mode_label.len();
+            
+            Line::from(vec![
+                Span::styled(
+                    mode_label,
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {} ", input_with_cursor),
+                    Style::default().fg(Color::Black).bg(Color::White),
+                ),
+                Span::styled(
+                    " ".repeat((area.width as usize).saturating_sub(mode_len + input_len + 1 + position_info.len())),
+                    Style::default().bg(Color::Cyan),
+                ),
+                Span::styled(
+                    position_info.clone(),
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        }
+        AppMode::SearchBackward(pattern) => {
+            // Search backward mode
+            let mode_label = " SEARCH ";
+            let input_with_cursor = format!("?{}█", pattern);
+            let input_len = input_with_cursor.len() + 1;
+            let mode_len = mode_label.len();
+            
+            Line::from(vec![
+                Span::styled(
+                    mode_label,
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {} ", input_with_cursor),
+                    Style::default().fg(Color::Black).bg(Color::White),
+                ),
+                Span::styled(
+                    " ".repeat((area.width as usize).saturating_sub(mode_len + input_len + 1 + position_info.len())),
+                    Style::default().bg(Color::Cyan),
+                ),
+                Span::styled(
+                    position_info.clone(),
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        }
+        AppMode::TranslationSettings => {
+            let left_content = " TRANSLATE | Use j/k for code, h/l for frame ";
+            let left_len = left_content.len();
+            
+            Line::from(vec![
+                Span::styled(
+                    left_content,
+                    Style::default().fg(Color::Black).bg(Color::Cyan),
+                ),
+                Span::styled(
+                    " ".repeat((area.width as usize).saturating_sub(left_len + position_info.len())),
+                    Style::default().bg(Color::Cyan),
+                ),
+                Span::styled(
+                    position_info.clone(),
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        }
     };
-
-    let left_len = left_content.len();
-    let status_line = Line::from(vec![
-        Span::styled(
-            left_content,
-            Style::default().fg(Color::Black).bg(Color::Cyan),
-        ),
-        Span::styled(
-            " ".repeat((area.width as usize).saturating_sub(left_len + position_info.len())),
-            Style::default().bg(Color::Cyan),
-        ),
-        Span::styled(
-            position_info,
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
 
     let paragraph = Paragraph::new(status_line);
     frame.render_widget(paragraph, area);
@@ -398,6 +485,7 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from("  :q             Quit the application"),
                 Line::from("  :h             Toggle this help"),
                 Line::from("  :<number>      Jump to sequence/row number"),
+                Line::from("  :w file.fa     Save to FASTA (single-line seqs)"),
                 Line::from(""),
                 Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
             ]);

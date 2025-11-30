@@ -89,9 +89,17 @@ cargo run -- sequences.fasta
 | `:q` | Quit |
 | `:h` | Toggle help overlay |
 | `:<number>` | Go to sequence/row |
+| `:w file.fa` | Save current view to FASTA (single-line format) |
 | `:asAA` | Translate nucleotides to amino acids |
 | `:asNT` | Switch back to nucleotide view |
 | `:setcode` | Change genetic code and reading frame |
+
+## Saving Alignments
+
+Use `:w filename.fasta` to save the current view:
+- Saves NT or AA sequences depending on current view mode
+- Sequences are written on single lines (convenient for bash processing)
+- Example: `:w Loc256_AA.fasta`
 
 ## Translation
 

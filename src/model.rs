@@ -986,9 +986,31 @@ impl AppState {
                     self.enter_translation_settings();
                     return false; // Don't reset to Normal - enter_translation_settings sets the mode
                 }
+                "w" => {
+                    // :w alone without filename
+                    self.status_message = Some("Usage: :w filename.fasta".to_string());
+                }
                 _ => {
+                    // Handle :w filename - save to FASTA
+                    if cmd.starts_with("w ") {
+                        let filename = cmd[2..].trim();
+                        if filename.is_empty() {
+                            self.status_message = Some("Usage: :w filename.fasta".to_string());
+                        } else {
+                            match self.write_fasta(filename) {
+                                Ok(count) => {
+                                    self.status_message = Some(format!(
+                                        "Saved {} sequences to {}", count, filename
+                                    ));
+                                }
+                                Err(e) => {
+                                    self.status_message = Some(format!("Error saving: {}", e));
+                                }
+                            }
+                        }
+                    }
                     // Handle :number for row/sequence navigation (like Vim's :line)
-                    if let Ok(row) = cmd.parse::<usize>() {
+                    else if let Ok(row) = cmd.parse::<usize>() {
                         let num_seqs = self.active_alignment().sequence_count();
                         if row > 0 && row <= num_seqs {
                             self.cursor.row = row - 1; // 1-indexed for user
@@ -1017,6 +1039,25 @@ impl AppState {
             return;
         }
         self.mode = AppMode::TranslationSettings;
+    }
+
+    /// Writes the current view (NT or AA) to a FASTA file.
+    /// Sequences are written on a single line (convenient for bash processing).
+    /// Returns the number of sequences written.
+    pub fn write_fasta(&self, filename: &str) -> std::io::Result<usize> {
+        use std::io::Write;
+        
+        let alignment = self.active_alignment();
+        let mut file = std::fs::File::create(filename)?;
+        
+        for seq in &alignment.sequences {
+            // Write header
+            writeln!(file, ">{}", seq.id)?;
+            // Write sequence on single line
+            writeln!(file, "{}", seq.as_str())?;
+        }
+        
+        Ok(alignment.sequence_count())
     }
 
     /// Switches to nucleotide view.
