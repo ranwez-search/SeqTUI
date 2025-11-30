@@ -30,6 +30,18 @@ fn base_to_index(b: u8) -> u8 {
     }
 }
 
+/// Check if a nucleotide is a simple ambiguity code (R, Y, N, ?)
+/// Returns the possible base indices, or empty slice if not ambiguous
+#[inline(always)]
+fn ambiguity_expansions(b: u8) -> &'static [u8] {
+    match b {
+        b'R' | b'r' => &[2, 3],     // A or G (puRine)
+        b'Y' | b'y' => &[0, 1],     // T/U or C (pYrimidine)
+        b'N' | b'n' | b'?' => &[0, 1, 2, 3], // any base
+        _ => &[],
+    }
+}
+
 impl GeneticCode {
     /// Creates a new genetic code from NCBI format strings.
     /// 
@@ -57,10 +69,12 @@ impl GeneticCode {
     /// 
     /// # Rules:
     /// - Standard codons (3 nucleotides) are translated using the genetic code
-    /// - Codons with ambiguous nucleotides (not A, C, G, T/U) return 'X'
+    /// - Simple ambiguity codes (R, Y, N, ?) with 2 unambiguous bases:
+    ///   If all possible codons translate to the same AA, return that AA
     /// - Codons with gaps (-) or frameshifts (!) follow special rules:
     ///   - All gaps/frameshifts (e.g., "---", "!!!") → '-'
     ///   - Mixed with nucleotides (e.g., "C-T", "A!G") → '!'
+    /// - Other ambiguous/invalid codons → 'X'
     #[inline]
     pub fn translate_codon(&self, codon: &[u8]) -> u8 {
         if codon.len() != 3 {
@@ -92,14 +106,50 @@ impl GeneticCode {
         let i2 = base_to_index(b2);
         let i3 = base_to_index(b3);
         
-        // Check for invalid/ambiguous nucleotides
-        if i1 == 255 || i2 == 255 || i3 == 255 {
+        // Fast path: all unambiguous bases
+        if i1 != 255 && i2 != 255 && i3 != 255 {
+            let idx = (i1 as usize) * 16 + (i2 as usize) * 4 + (i3 as usize);
+            return self.codon_table[idx];
+        }
+        
+        // Check for ambiguity codes (R, Y, N, ?)
+        let a1 = ambiguity_expansions(b1);
+        let a2 = ambiguity_expansions(b2);
+        let a3 = ambiguity_expansions(b3);
+        
+        // Count ambiguous positions
+        let amb_count = (i1 == 255 && !a1.is_empty()) as u8
+            + (i2 == 255 && !a2.is_empty()) as u8
+            + (i3 == 255 && !a3.is_empty()) as u8;
+        
+        // Only handle 1 ambiguous position (practical case)
+        // Multiple ambiguities (e.g., NNR) → too many possibilities, return X
+        if amb_count != 1 {
             return b'X';
         }
         
-        // Direct array lookup: O(1)
-        let idx = (i1 as usize) * 16 + (i2 as usize) * 4 + (i3 as usize);
-        self.codon_table[idx]
+        // Get the expansion arrays (use single-element slices for unambiguous bases)
+        let exp1: &[u8] = if i1 != 255 { std::slice::from_ref(&i1) } else { a1 };
+        let exp2: &[u8] = if i2 != 255 { std::slice::from_ref(&i2) } else { a2 };
+        let exp3: &[u8] = if i3 != 255 { std::slice::from_ref(&i3) } else { a3 };
+        
+        // Check if all possible codons translate to the same amino acid
+        let mut first_aa: Option<u8> = None;
+        for &e1 in exp1 {
+            for &e2 in exp2 {
+                for &e3 in exp3 {
+                    let idx = (e1 as usize) * 16 + (e2 as usize) * 4 + (e3 as usize);
+                    let aa = self.codon_table[idx];
+                    match first_aa {
+                        None => first_aa = Some(aa),
+                        Some(prev) if prev != aa => return b'X', // Different AAs → X
+                        _ => {}
+                    }
+                }
+            }
+        }
+        
+        first_aa.unwrap_or(b'X')
     }
     
     /// Translates a single codon string to an amino acid char (convenience wrapper).
@@ -280,10 +330,42 @@ mod tests {
         let codes = GeneticCodes::new();
         let standard = codes.default_code();
         
-        // Ambiguous nucleotides → X
+        // R = A or G (purine)
+        // CTR → CTA (Leu) or CTG (Leu) → both Leu, so L
+        assert_eq!(standard.translate_codon_str("CTR"), 'L');
+        
+        // Y = T or C (pyrimidine)
+        // TAY → TAT (Tyr) or TAC (Tyr) → both Tyr, so Y
+        assert_eq!(standard.translate_codon_str("TAY"), 'Y');
+        
+        // N = any base
+        // GGN → GGT, GGC, GGA, GGG → all Gly, so G
+        assert_eq!(standard.translate_codon_str("GGN"), 'G');
+        
+        // ACN → ACT, ACC, ACA, ACG → all Thr, so T
+        assert_eq!(standard.translate_codon_str("ACN"), 'T');
+        
+        // ? treated like N
+        assert_eq!(standard.translate_codon_str("GG?"), 'G');
+        
+        // Cases where ambiguity leads to different AAs → X
+        // ATN → ATT (Ile), ATC (Ile), ATA (Ile), ATG (Met) → mixed, X
         assert_eq!(standard.translate_codon_str("ATN"), 'X');
+        
+        // AGR → AGA (Arg), AGG (Arg) → both Arg, so R
+        assert_eq!(standard.translate_codon_str("AGR"), 'R');
+        
+        // AGY → AGT (Ser), AGC (Ser) → both Ser, so S
+        assert_eq!(standard.translate_codon_str("AGY"), 'S');
+        
+        // Multiple ambiguous positions → X (too complex)
         assert_eq!(standard.translate_codon_str("NNN"), 'X');
-        assert_eq!(standard.translate_codon_str("CTR"), 'X'); // R = A or G
+        assert_eq!(standard.translate_codon_str("NTN"), 'X');
+        assert_eq!(standard.translate_codon_str("RRR"), 'X');
+        
+        // Unknown ambiguity codes → X
+        assert_eq!(standard.translate_codon_str("ATW"), 'X'); // W = A or T
+        assert_eq!(standard.translate_codon_str("ATS"), 'X'); // S = G or C
     }
     
     #[test]
