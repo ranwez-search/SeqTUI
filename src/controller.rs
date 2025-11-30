@@ -83,9 +83,11 @@ impl App {
     }
 
     /// Creates a new application and starts loading a file in the background.
+    /// Optional `preset_translation` is (genetic_code_id, reading_frame) to preset translation settings.
     pub fn new_with_background_load(
         file_path: PathBuf,
         forced_format: Option<FileFormat>,
+        preset_translation: Option<(u8, u8)>,
     ) -> Result<Self> {
         // Extract file name for display
         let file_name = file_path
@@ -95,7 +97,22 @@ impl App {
             .to_string();
 
         // Create initial state in loading mode
-        let state = AppState::new_loading(file_name, file_path.clone());
+        let mut state = AppState::new_loading(file_name, file_path.clone());
+        
+        // Apply preset translation settings if provided
+        if let Some((genetic_code, reading_frame)) = preset_translation {
+            // Find the index of the genetic code in the list
+            let codes = GeneticCodes::new();
+            let code_index = codes.all().iter().position(|c| c.id == genetic_code).unwrap_or(0);
+            
+            state.translation_settings.genetic_code_id = genetic_code;
+            state.translation_settings.selected_code_index = code_index;
+            // Convert from 1-based to 0-based frame
+            let frame = (reading_frame.saturating_sub(1) as usize).min(2);
+            state.translation_settings.frame = frame;
+            state.translation_settings.selected_frame = frame;
+            state.translation_settings.has_translated = true; // Skip the settings dialog
+        }
 
         // Setup terminal
         enable_raw_mode()?;
@@ -304,8 +321,13 @@ pub fn run_app(state: AppState) -> Result<()> {
 }
 
 /// Convenience function to run the application with background loading.
-pub fn run_app_with_loading(file_path: PathBuf, forced_format: Option<FileFormat>) -> Result<()> {
-    let mut app = App::new_with_background_load(file_path, forced_format)?;
+/// Optional `preset_translation` is (genetic_code_id, reading_frame) to preset translation settings.
+pub fn run_app_with_loading(
+    file_path: PathBuf,
+    forced_format: Option<FileFormat>,
+    preset_translation: Option<(u8, u8)>,
+) -> Result<()> {
+    let mut app = App::new_with_background_load(file_path, forced_format, preset_translation)?;
     app.run()
 }
 

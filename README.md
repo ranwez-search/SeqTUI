@@ -20,7 +20,7 @@ A terminal-based viewer for sequence alignments written in Rust using [ratatui](
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/SeqTUI.git
+git clone https://github.com/ranwez-search/SeqTUI.git
 cd SeqTUI
 
 # Build and install
@@ -28,6 +28,12 @@ cargo install --path .
 ```
 
 ## Usage
+
+SeqTUI works in two modes:
+- **TUI mode** (default): Interactive terminal viewer
+- **CLI mode** (with `-o`): Command-line converter for batch processing
+
+### TUI Mode (Interactive Viewer)
 
 ```bash
 # View an alignment (format auto-detected from extension)
@@ -39,9 +45,38 @@ seqtui data.nex
 seqtui -f nexus myfile.txt
 seqtui -f phylip alignment.dat
 
-# Or run with cargo
-cargo run -- sequences.fasta
+# Preset translation settings for TUI
+seqtui sequences.fasta -g 2 -r 1    # Open with genetic code 2 preset
 ```
+
+### CLI Mode (Batch Processing)
+
+Use `-o` to output to a file (or `-` for stdout) instead of opening the TUI:
+
+```bash
+# Convert to single-line FASTA (convenient for grep/awk)
+seqtui sequences.fasta -o sequences_1L.fasta
+
+# Translate to amino acids
+seqtui sequences.fasta -t -o sequences_AA.fasta
+
+# Translate with specific genetic code and reading frame
+seqtui sequences.fasta -t -g 2 -r 1 -o sequences_AA.fasta
+
+# Output to stdout (pipe-friendly)
+seqtui sequences.fasta -t -o - | grep "^>"
+seqtui sequences.fasta -t -o - | wc -l
+```
+
+### CLI Options
+
+| Option | Long | Description |
+|--------|------|-------------|
+| `-o` | `--output` | Output file (use `-` for stdout). Enables CLI mode |
+| `-t` | `--translate` | Translate nucleotides to amino acids |
+| `-g` | `--genetic-code` | Genetic code (1-33, default: 1 = Standard) |
+| `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
+| `-f` | `--format` | Force input format (fasta, phylip, nexus, auto) |
 
 ## Supported Formats
 
@@ -96,10 +131,21 @@ cargo run -- sequences.fasta
 
 ## Saving Alignments
 
+### In TUI Mode
 Use `:w filename.fasta` to save the current view:
 - Saves NT or AA sequences depending on current view mode
 - Sequences are written on single lines (convenient for bash processing)
 - Example: `:w Loc256_AA.fasta`
+
+### In CLI Mode
+Use `-o` for batch conversion (see CLI Mode above):
+```bash
+# Convert PHYLIP to single-line FASTA
+seqtui alignment.phy -o alignment.fasta
+
+# Batch translate all files in a directory
+for f in *.fasta; do seqtui "$f" -t -o "${f%.fasta}_AA.fasta"; done
+```
 
 ## Translation
 
