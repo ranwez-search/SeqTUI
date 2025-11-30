@@ -104,6 +104,8 @@ pub enum Action {
     TranslationFrameRight,
     /// Translation settings: confirm and translate
     TranslationConfirm,
+    /// Request to start translation (handled by controller for async)
+    StartTranslation,
     /// Translation settings: cancel
     TranslationCancel,
     /// Move half page up (Ctrl+U)
@@ -335,10 +337,19 @@ fn handle_translation_settings_mode(key: KeyEvent) -> Action {
     }
 }
 
+/// Result of applying an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionResult {
+    /// Continue normally
+    Continue,
+    /// Start background translation
+    StartTranslation,
+}
+
 /// Applies an action to the application state.
 ///
-/// Returns `true` if the application should continue, `false` if it should quit.
-pub fn apply_action(state: &mut AppState, action: Action) -> bool {
+/// Returns ActionResult indicating if any follow-up action is needed.
+pub fn apply_action(state: &mut AppState, action: Action) -> ActionResult {
     match action {
         Action::None => {}
         Action::Quit => {
@@ -363,7 +374,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
             state.command_input(c);
         }
         Action::ExecuteCommand => {
-            state.execute_command();
+            if state.execute_command() {
+                return ActionResult::StartTranslation;
+            }
         }
         Action::CancelCommand => {
             state.cancel_command();
@@ -447,7 +460,15 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
             state.translation_settings_frame_right();
         }
         Action::TranslationConfirm => {
-            state.confirm_translation_settings();
+            if state.confirm_translation_settings() {
+                return ActionResult::StartTranslation;
+            }
+        }
+        Action::StartTranslation => {
+            // This is handled by the controller, not here
+            if state.should_start_translation() {
+                return ActionResult::StartTranslation;
+            }
         }
         Action::TranslationCancel => {
             state.cancel_translation_settings();
@@ -484,7 +505,7 @@ pub fn apply_action(state: &mut AppState, action: Action) -> bool {
         }
     }
 
-    !state.should_quit
+    ActionResult::Continue
 }
 
 #[cfg(test)]

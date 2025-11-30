@@ -4,11 +4,13 @@
 //! - Sequences and alignments
 //! - Viewport state
 //! - Application state
+//! - Loading state for async operations
 //!
 //! The design allows for future extensions like filtering, codon views,
 //! and translation between nucleotides and amino acids.
 
 use std::ops::Range;
+use std::path::PathBuf;
 
 /// Type of biological sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -18,6 +20,68 @@ pub enum SequenceType {
     Nucleotide,
     /// Amino acid/protein sequences
     AminoAcid,
+}
+
+/// Loading state for async operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadingState {
+    /// No loading in progress, alignment is ready
+    Ready,
+    /// Loading file from disk
+    LoadingFile {
+        /// File path being loaded
+        path: PathBuf,
+        /// Progress message (e.g., "Parsing NEXUS file...")
+        message: String,
+        /// Number of sequences loaded so far (if available)
+        sequences_loaded: Option<usize>,
+    },
+    /// Translating sequences
+    Translating {
+        /// Progress message
+        message: String,
+        /// Number of sequences translated so far
+        sequences_done: usize,
+        /// Total number of sequences
+        total: usize,
+    },
+}
+
+impl Default for LoadingState {
+    fn default() -> Self {
+        LoadingState::Ready
+    }
+}
+
+impl LoadingState {
+    /// Returns true if currently loading/processing.
+    pub fn is_loading(&self) -> bool {
+        !matches!(self, LoadingState::Ready)
+    }
+
+    /// Returns the display message for the loading state.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            LoadingState::Ready => None,
+            LoadingState::LoadingFile { message, .. } => Some(message),
+            LoadingState::Translating { message, .. } => Some(message),
+        }
+    }
+
+    /// Returns progress as a fraction (0.0 to 1.0) if available.
+    pub fn progress(&self) -> Option<f64> {
+        match self {
+            LoadingState::Ready => None,
+            LoadingState::LoadingFile { .. } => None, // Indeterminate
+            LoadingState::Translating { sequences_done, total, .. } => {
+                if *total > 0 {
+                    Some(*sequences_done as f64 / *total as f64)
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 /// Represents a single sequence with its identifier and data.
@@ -403,8 +467,12 @@ pub struct AppState {
     pub file_name: String,
     /// The original loaded alignment (always nucleotide if translated)
     pub alignment: Alignment,
-    /// The translated alignment (if viewing as AA) - lazily computed
+    /// The translated alignment (if viewing as AA) - lazily computed and cached
     translated_alignment: Option<Alignment>,
+    /// Genetic code ID used for the cached translation (to detect if recomputation needed)
+    cached_translation_code_id: Option<u8>,
+    /// Reading frame used for the cached translation (to detect if recomputation needed)
+    cached_translation_frame: Option<usize>,
     /// Current view mode
     pub view_mode: ViewMode,
     /// Translation settings
@@ -433,6 +501,10 @@ pub struct AppState {
     pub pending_z: bool,
     /// Number buffer for <number>| command
     pub number_buffer: String,
+    /// Loading state for async operations
+    pub loading_state: LoadingState,
+    /// Spinner animation frame (0-3)
+    pub spinner_frame: usize,
 }
 
 impl AppState {
@@ -443,6 +515,8 @@ impl AppState {
             file_name,
             alignment,
             translated_alignment: None,
+            cached_translation_code_id: None,
+            cached_translation_frame: None,
             view_mode: ViewMode::Nucleotide,
             translation_settings: TranslationSettings::default(),
             viewport: Viewport::new(0, 0),
@@ -457,7 +531,146 @@ impl AppState {
             pending_g: false,
             pending_z: false,
             number_buffer: String::new(),
+            loading_state: LoadingState::Ready,
+            spinner_frame: 0,
         }
+    }
+
+    /// Creates an empty application state for async loading.
+    pub fn new_loading(file_name: String, path: PathBuf) -> Self {
+        Self {
+            file_name: file_name.clone(),
+            alignment: Alignment::new(vec![]),
+            translated_alignment: None,
+            cached_translation_code_id: None,
+            cached_translation_frame: None,
+            view_mode: ViewMode::Nucleotide,
+            translation_settings: TranslationSettings::default(),
+            viewport: Viewport::new(0, 0),
+            cursor: Cursor::new(),
+            mode: AppMode::Normal,
+            should_quit: false,
+            status_message: None,
+            last_search: None,
+            last_search_backward: false,
+            show_help: false,
+            help_tab: HelpTab::default(),
+            pending_g: false,
+            pending_z: false,
+            number_buffer: String::new(),
+            loading_state: LoadingState::LoadingFile {
+                path,
+                message: format!("Loading {}...", file_name),
+                sequences_loaded: None,
+            },
+            spinner_frame: 0,
+        }
+    }
+
+    /// Updates the alignment after async loading completes.
+    pub fn set_alignment(&mut self, alignment: Alignment) {
+        let warning = alignment.warning.clone();
+        self.alignment = alignment;
+        self.loading_state = LoadingState::Ready;
+        if let Some(w) = warning {
+            self.status_message = Some(w);
+        }
+    }
+
+    /// Sets an error state after loading fails.
+    pub fn set_loading_error(&mut self, error: String) {
+        self.loading_state = LoadingState::Ready;
+        self.status_message = Some(format!("Error: {}", error));
+    }
+
+    /// Sets the translated alignment after async translation completes.
+    pub fn set_translated_alignment(&mut self, alignment: Alignment) {
+        self.translated_alignment = Some(alignment);
+        // Cache the settings used for this translation
+        self.cached_translation_code_id = Some(self.translation_settings.genetic_code_id);
+        self.cached_translation_frame = Some(self.translation_settings.frame);
+        self.loading_state = LoadingState::Ready;
+        self.view_mode = ViewMode::AminoAcid;
+        
+        // Convert NT cursor position to AA position
+        let frame = self.translation_settings.frame;
+        let aa_col = if self.cursor.col >= frame {
+            (self.cursor.col - frame) / 3
+        } else {
+            0
+        };
+        
+        let aa_len = self.translated_alignment.as_ref()
+            .map(|a| a.alignment_length())
+            .unwrap_or(0);
+        self.cursor.col = aa_col.min(aa_len.saturating_sub(1));
+        
+        self.ensure_cursor_visible();
+        self.status_message = Some(format!(
+            "Translated using code {} (frame +{})",
+            self.translation_settings.genetic_code_id,
+            self.translation_settings.frame + 1
+        ));
+    }
+
+    /// Returns true if we should start background translation.
+    /// Called when user triggers translation command.
+    /// Returns false if we already have a cached translation with matching settings.
+    pub fn should_start_translation(&self) -> bool {
+        self.alignment.sequence_type == SequenceType::Nucleotide
+            && !self.loading_state.is_loading()
+            && !self.has_valid_cached_translation()
+    }
+    
+    /// Returns true if we have a cached translated alignment that matches
+    /// the current translation settings (code_id and frame).
+    pub fn has_valid_cached_translation(&self) -> bool {
+        if self.translated_alignment.is_none() {
+            return false;
+        }
+        let code_matches = self.cached_translation_code_id == Some(self.translation_settings.genetic_code_id);
+        let frame_matches = self.cached_translation_frame == Some(self.translation_settings.frame);
+        code_matches && frame_matches
+    }
+    
+    /// Switches to the cached amino acid view without recomputation.
+    /// Call this when has_valid_cached_translation() returns true.
+    pub fn switch_to_cached_aa_view(&mut self) {
+        if self.translated_alignment.is_none() {
+            return;
+        }
+        self.view_mode = ViewMode::AminoAcid;
+        
+        // Convert NT cursor position to AA position
+        let frame = self.translation_settings.frame;
+        let aa_col = if self.cursor.col >= frame {
+            (self.cursor.col - frame) / 3
+        } else {
+            0
+        };
+        
+        let aa_len = self.translated_alignment.as_ref()
+            .map(|a| a.alignment_length())
+            .unwrap_or(0);
+        self.cursor.col = aa_col.min(aa_len.saturating_sub(1));
+        
+        self.ensure_cursor_visible();
+        self.status_message = Some(format!(
+            "Using cached translation (code {}, frame +{})",
+            self.cached_translation_code_id.unwrap_or(1),
+            self.cached_translation_frame.unwrap_or(0) + 1
+        ));
+    }
+
+    /// Advances the spinner animation frame.
+    pub fn tick_spinner(&mut self) {
+        self.spinner_frame = (self.spinner_frame + 1) % 4;
+    }
+
+    /// Returns the current spinner character.
+    pub fn spinner_char(&self) -> char {
+        const SPINNER: [char; 4] = ['⠋', '⠙', '⠹', '⠸'];
+        SPINNER[self.spinner_frame]
     }
 
     /// Returns the currently active alignment (original or translated).
@@ -733,7 +946,9 @@ impl AppState {
     }
 
     /// Executes the current command.
-    pub fn execute_command(&mut self) {
+    /// Returns true if translation should be started (handled by controller).
+    pub fn execute_command(&mut self) -> bool {
+        let mut start_translation = false;
         if let AppMode::Command(ref cmd) = self.mode.clone() {
             match cmd.as_str() {
                 "q" | "quit" => self.should_quit = true,
@@ -741,19 +956,22 @@ impl AppState {
                 "asAA" | "asaa" => {
                     if self.alignment.sequence_type != SequenceType::Nucleotide {
                         self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
+                    } else if self.has_valid_cached_translation() {
+                        // We have a valid cached translation - switch to it directly
+                        self.switch_to_cached_aa_view();
                     } else if !self.translation_settings.has_translated {
                         // First time: show settings so user knows the options
                         self.enter_translation_settings();
-                        return; // Don't reset to Normal
+                        return false; // Don't reset to Normal
                     } else {
-                        // Subsequent times: translate directly with saved settings
-                        self.switch_to_amino_acid_view();
+                        // Subsequent times: request translation (controller will start background thread)
+                        start_translation = true;
                     }
                 }
                 "asNT" | "asnt" => self.switch_to_nucleotide_view(),
                 "setcode" => {
                     self.enter_translation_settings();
-                    return; // Don't reset to Normal - enter_translation_settings sets the mode
+                    return false; // Don't reset to Normal - enter_translation_settings sets the mode
                 }
                 _ => {
                     // Handle :number for row/sequence navigation (like Vim's :line)
@@ -775,6 +993,7 @@ impl AppState {
             }
         }
         self.mode = AppMode::Normal;
+        start_translation
     }
 
     /// Enters translation settings mode.
@@ -802,8 +1021,8 @@ impl AppState {
         
         self.view_mode = ViewMode::Nucleotide;
         
-        // Free the translated alignment to save memory
-        self.translated_alignment = None;
+        // Keep the translated alignment cached for fast switching back
+        // It will be invalidated if genetic code or frame changes
         
         self.ensure_cursor_visible();
         self.status_message = Some("Switched to nucleotide view".to_string());
@@ -855,8 +1074,9 @@ impl AppState {
         ));
     }
 
-    /// Confirms translation settings and switches to AA view.
-    pub fn confirm_translation_settings(&mut self) {
+    /// Confirms translation settings (does NOT start translation - that's handled by controller).
+    /// Returns true if translation should be started.
+    pub fn confirm_translation_settings(&mut self) -> bool {
         // Copy selected values to actual settings
         self.translation_settings.genetic_code_id = {
             use crate::genetic_code::GeneticCodes;
@@ -869,7 +1089,15 @@ impl AppState {
         self.translation_settings.has_translated = true;
         
         self.mode = AppMode::Normal;
-        self.switch_to_amino_acid_view();
+        
+        // Check if we can use cached translation (settings match)
+        if self.has_valid_cached_translation() {
+            self.switch_to_cached_aa_view();
+            return false;
+        }
+        
+        // Return true to signal controller should start background translation
+        true
     }
 
     /// Cancels translation settings.

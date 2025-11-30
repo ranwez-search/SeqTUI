@@ -26,13 +26,12 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
-use seqtui::controller::run_app;
-use seqtui::formats::{parse_file_with_options, FileFormat};
-use seqtui::model::AppState;
+use seqtui::controller::run_app_with_loading;
+use seqtui::formats::FileFormat;
 
 /// File format specification for command line
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -73,33 +72,12 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let file_path = &args.file;
+    let file_path = args.file;
     let forced_format: Option<FileFormat> = args.format.into();
 
-    // Parse the sequence file
-    let alignment = parse_file_with_options(file_path, forced_format)
-        .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
-
-    // Print info before entering TUI (will be hidden)
-    if !alignment.is_valid_alignment {
-        eprintln!(
-            "Warning: {}",
-            alignment.warning.as_ref().unwrap_or(&String::new())
-        );
-    }
-
-    // Extract file name (basename without extension)
-    let file_name = file_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("alignment")
-        .to_string();
-
-    // Create application state
-    let state = AppState::new(alignment, file_name);
-
-    // Run the TUI application
-    run_app(state)?;
+    // Run the TUI application with background loading
+    // The TUI opens immediately and shows a loading spinner while parsing
+    run_app_with_loading(file_path, forced_format)?;
 
     Ok(())
 }

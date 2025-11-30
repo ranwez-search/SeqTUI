@@ -156,6 +156,11 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if state.mode == AppMode::TranslationSettings {
         render_translation_settings_overlay(frame, state, area);
     }
+
+    // Render loading overlay if active
+    if state.loading_state.is_loading() {
+        render_loading_overlay(frame, state, area);
+    }
 }
 
 /// Renders the sequence names panel (sticky, always visible).
@@ -573,6 +578,61 @@ fn render_translation_settings_overlay(frame: &mut Frame, state: &AppState, area
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Translation Settings ")
+        .title_style(Style::default().add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Renders a loading overlay with spinner animation.
+fn render_loading_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
+    use crate::model::LoadingState;
+    
+    let (message, progress_info) = match &state.loading_state {
+        LoadingState::Ready => return, // Nothing to show
+        LoadingState::LoadingFile { message, sequences_loaded, .. } => {
+            let extra = sequences_loaded
+                .map(|n| format!(" ({} sequences)", n))
+                .unwrap_or_default();
+            (message.clone(), extra)
+        }
+        LoadingState::Translating { message, sequences_done, total, .. } => {
+            let extra = format!(" ({}/{})", sequences_done, total);
+            (message.clone(), extra)
+        }
+    };
+
+    // Calculate centered popup dimensions
+    let popup_width = 50.min(area.width.saturating_sub(4));
+    let popup_height = 5;
+    
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    // Build content with spinner
+    let spinner = state.spinner_char();
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!("  {} ", spinner),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&message, Style::default().fg(Color::White)),
+            Span::styled(progress_info, Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Loading ")
         .title_style(Style::default().add_modifier(Modifier::BOLD))
         .style(Style::default().bg(Color::Black));
 

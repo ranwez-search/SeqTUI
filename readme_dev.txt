@@ -5,8 +5,8 @@ SeqTUI - Developer Reference Document
 Last updated: November 2025
 
 This document provides context for continuing development on SeqTUI, a terminal-
-based FASTA alignment viewer written in Rust. It captures key design decisions,
-architecture choices, and lessons learned during development.
+based sequence alignment viewer (FASTA, PHYLIP, NEXUS) written in Rust. It 
+captures key design decisions, architecture choices, and lessons learned.
 
 ================================================================================
 PROJECT GOAL
@@ -39,10 +39,11 @@ src/
 │   └── phylip.rs   - PHYLIP parser (sequential + interleaved)
 ├── event.rs        - Keyboard input handling (Action enum, apply_action)
 ├── ui.rs           - TUI rendering with ratatui
-├── controller.rs   - Main loop connecting events to state to rendering
+├── controller.rs   - Main loop, background loading, channel-based messaging
 └── genetic_code.rs - 33 NCBI genetic codes and translation logic
 
 Key design pattern: Events -> Actions -> State mutations -> Render
+Async pattern: Background thread -> Channel -> Main loop polls -> State update
 
 ================================================================================
 KEY DATA STRUCTURES (model.rs)
@@ -61,7 +62,11 @@ Alignment {
 AppState {
     alignment: Alignment,
     translated_alignment: Option<Alignment>,  // Cached AA translation
+    cached_translation_code_id: Option<u8>,   // Code used for cached translation
+    cached_translation_frame: Option<usize>,  // Frame used for cached translation
     view_mode: ViewMode,      // Nucleotide or AminoAcid
+    loading_state: LoadingState,  // Ready, LoadingFile, Translating
+    spinner_frame: usize,     // Animation frame (0-3)
     viewport: Viewport,       // What's visible on screen
     cursor: Cursor,           // Current position
     mode: AppMode,            // Normal, Command, Search, TranslationSettings
@@ -69,6 +74,12 @@ AppState {
     pending_g: bool,          // For g-prefix commands
     pending_z: bool,          // For z-prefix commands (zH, zL)
     ...
+}
+
+LoadingState {
+    Ready,                    // No loading in progress
+    LoadingFile { path, message, sequences_loaded },
+    Translating { message, sequences_done, total },
 }
 
 ================================================================================
@@ -102,6 +113,47 @@ These were critical for handling 500MB+ files (47 sequences × 11M nucleotides):
    - Initially added for speed, but caused 15 threads overhead
    - Single-threaded is fast enough for interactive use
    - Simpler code, lower memory footprint
+
+================================================================================
+ASYNC LOADING ARCHITECTURE
+================================================================================
+
+The TUI opens IMMEDIATELY when the user runs seqtui. File parsing happens in
+a background thread while a loading spinner is displayed.
+
+Components:
+
+1. LoadingState enum (model.rs)
+   - Ready: No loading, alignment is displayed
+   - LoadingFile: Parsing in progress, shows spinner
+   - Translating: Translation in progress (future use)
+
+2. LoadMessage enum (controller.rs)
+   - Complete(Alignment): Parsing succeeded
+   - Error(String): Parsing failed
+   - Progress { sequences_loaded }: Streaming updates (future use)
+
+3. Background loading flow:
+   a. main.rs calls run_app_with_loading(path, format)
+   b. Controller creates AppState in LoadingFile state
+   c. Controller spawns std::thread for parsing
+   d. TUI renders immediately with spinner overlay
+   e. Main loop polls channel (non-blocking try_recv)
+   f. On LoadMessage::Complete, state.set_alignment() is called
+   g. Spinner disappears, alignment is shown
+
+4. Spinner animation:
+   - Braille characters: ⠋ ⠙ ⠹ ⠸ (4 frames)
+   - tick_spinner() advances frame each render loop (~50ms)
+   - spinner_char() returns current frame character
+
+5. Error handling:
+   - If parsing fails, LoadMessage::Error is sent
+   - state.set_loading_error() displays error in status bar
+   - User can quit with :q
+
+Future: Could add streaming parser that sends Progress messages as sequences
+are parsed, updating the count in the loading overlay.
 
 ================================================================================
 VIM NAVIGATION DESIGN
@@ -167,9 +219,25 @@ Nucleotide to amino acid translation:
 - 3 reading frames (+1, +2, +3)
 - Translation settings UI with j/k for code, h/l for frame
 
-The translated alignment is cached in translated_alignment. When user types
-:asNT, we switch view_mode back to Nucleotide and the translation stays cached.
-Typing :asAA again reuses the cache unless settings changed.
+TRANSLATION CACHING:
+The translated alignment is cached in `translated_alignment` along with 
+metadata tracking which settings were used:
+- cached_translation_code_id: Option<u8> - Genetic code ID used
+- cached_translation_frame: Option<usize> - Frame used (0, 1, or 2)
+
+When user types :asNT, we switch view_mode back to Nucleotide but KEEP the
+cached translation. When typing :asAA again:
+1. has_valid_cached_translation() checks if cached settings match current
+2. If match: switch_to_cached_aa_view() - instant, no recomputation
+3. If no match: start_background_translation() - recompute in background
+
+This enables rapid NT↔AA toggling without recomputation, which is important
+for large alignments where translation can take several seconds.
+
+CACHE INVALIDATION:
+Cache is invalidated when genetic_code_id or frame changes:
+- User opens :setcode dialog and changes settings
+- Cache metadata won't match, triggering recomputation
 
 Memory note: Dropping translated_alignment with jemalloc properly returns
 memory to OS. Without jemalloc, memory stays allocated.
@@ -280,7 +348,7 @@ Edge cases:
 TESTING
 ================================================================================
 
-74+ unit tests covering:
+75+ unit tests covering:
 - Event handling and key mappings
 - FASTA parsing edge cases
 - PHYLIP parsing (sequential, interleaved, relaxed names)
@@ -348,10 +416,11 @@ architecture decisions and design patterns used.
 
 Key files to review when resuming:
 1. This file (readme_dev.txt)
-2. src/model.rs - Core state and data structures  
-3. src/event.rs - Action definitions and key handling
-4. src/genetic_code.rs - Translation logic
-5. src/formats/mod.rs - Format detection and unified parsing API
-6. src/formats/nexus.rs - Token-based NEXUS parser
+2. src/model.rs - Core state and data structures (incl. LoadingState)
+3. src/controller.rs - Main loop, background loading, LoadMessage channel
+4. src/event.rs - Action definitions and key handling
+5. src/genetic_code.rs - Translation logic
+6. src/formats/mod.rs - Format detection and unified parsing API
+7. src/formats/nexus.rs - Token-based NEXUS parser
 
 ================================================================================
