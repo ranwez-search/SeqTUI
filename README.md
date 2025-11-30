@@ -51,10 +51,11 @@ seqtui sequences.fasta -g 2 -r 1    # Open with genetic code 2 preset
 
 ### CLI Mode (Batch Processing)
 
-Use `-o` to output to a file (or `-` for stdout) instead of opening the TUI:
+Use `-o` to output to a file (or `-` for stdout) instead of opening the TUI.
+**Single-line FASTA output** makes sequences easy to process with standard Unix tools:
 
 ```bash
-# Convert to single-line FASTA (convenient for grep/awk)
+# Convert to single-line FASTA
 seqtui sequences.fasta -o sequences_1L.fasta
 
 # Translate to amino acids
@@ -62,10 +63,25 @@ seqtui sequences.fasta -t -o sequences_AA.fasta
 
 # Translate with specific genetic code and reading frame
 seqtui sequences.fasta -t -g 2 -r 1 -o sequences_AA.fasta
+```
 
-# Output to stdout (pipe-friendly)
-seqtui sequences.fasta -t -o - | grep "^>"
-seqtui sequences.fasta -t -o - | wc -l
+**Unix pipeline examples** (single-line FASTA makes this easy!):
+
+```bash
+# Check for internal stop codons in coding sequences
+seqtui sequences.fasta -t -o - | grep "\*."
+
+# Create a small test set (first 10 sequences, 500 bp each)
+seqtui large_alignment.nex -o - | head -20 | cut -c1-500 > test_seq.fasta
+
+# Extract subset of sequences by ID
+seqtui sequences.nex -o - | grep -A1 -f seq_ids.txt > subset.fasta
+
+# Count sequences
+seqtui alignment.phy -o - | grep -c "^>"
+
+# Batch translate all files in a directory
+for f in *.fasta; do seqtui "$f" -t -o "${f%.fasta}_AA.fasta"; done
 ```
 
 ### CLI Options
@@ -138,14 +154,7 @@ Use `:w filename.fasta` to save the current view:
 - Example: `:w Loc256_AA.fasta`
 
 ### In CLI Mode
-Use `-o` for batch conversion (see CLI Mode above):
-```bash
-# Convert PHYLIP to single-line FASTA
-seqtui alignment.phy -o alignment.fasta
-
-# Batch translate all files in a directory
-for f in *.fasta; do seqtui "$f" -t -o "${f%.fasta}_AA.fasta"; done
-```
+Use `-o` for batch conversion — see [CLI Mode](#cli-mode-batch-processing) for examples.
 
 ## Translation
 
