@@ -1,19 +1,18 @@
-# SeqTUI - Terminal Alignment Viewer
+# SeqTUI - Terminal Alignment Viewer & Toolkit
 
-A terminal-based viewer for sequence alignments written in Rust using [ratatui](https://ratatui.rs/).
+A fast terminal-based viewer and command-line toolkit for sequences. View, translate, convert, and concatenate sequences aligned or not — all from the terminal.
+
+Written in Rust using [ratatui](https://ratatui.rs/).
 
 ## Features
 
 - 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
 - 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
-  - **Nucleotides**: A (Red), C (Green), G (Yellow), T/U (Blue)
-  - **Amino Acids**: Seaview-style coloring by chemical properties
-- 🔄 **NT → AA Translation**: Translate nucleotide sequences to amino acids with 33 genetic codes
-- 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling horizontally
-- ⌨️ **Vim-style Navigation**: Full Vim-like controls (h/j/k/l, w/b/e, Ctrl+U/D, g0/gm/g$)
-- 🖱️ **Arrow Navigation**: Shift+arrows for page/half-page scrolling
-- 🔍 **Pattern Search**: Search forward (`/`) and backward (`?`) in sequences and names
-- ❓ **Tabbed Help**: Press `:h` for organized help with 5 sections
+- 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handles ambiguity codes (R, Y, N)
+- 🧩 **Concatenation & Supermatrix**: Merge multiple alignments, fill missing with gaps
+- 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling
+- ⌨️ **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
+- 🔧 **CLI Mode**: Batch convert, translate, concatenate — pipe-friendly output
 - 🚀 **Large File Support**: Tested on 500MB+ alignments
 
 ## Installation
@@ -93,6 +92,40 @@ for f in *.fasta; do seqtui "$f" -t -o "${f%.fasta}_AA.fasta"; done
 | `-g` | `--genetic-code` | Genetic code (1-33, default: 1 = Standard) |
 | `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
 | `-f` | `--format` | Force input format (fasta, phylip, nexus, auto) |
+| `-d` | `--delimiter` | Delimiter for ID matching (uses first field) |
+| `-s` | `--supermatrix` | Fill missing sequences with gaps |
+| `-p` | `--partitions` | Write partition file (gene boundaries) |
+
+### Sequence Concatenation & Supermatrix
+
+Concatenate multiple alignment files by matching sequence IDs:
+
+```bash
+# Basic concatenation (sequences matched by ID)
+seqtui gene1.fasta gene2.fasta gene3.fasta -o concatenated.fasta
+
+# Mix different formats (FASTA, PHYLIP, NEXUS) - auto-detected!
+seqtui gene1.fasta gene2.phy gene3.nex -o concatenated.fasta
+
+# Supermatrix: fill missing sequences with gaps
+seqtui gene*.fasta -s -o supermatrix.fasta
+
+# With partition file for phylogenetic analysis
+seqtui gene*.fasta -s -p partitions.txt -o supermatrix.fasta
+# Creates: partitions.txt with "gene1 = 1-500", "gene2 = 501-1200", etc.
+
+# Translate all genes and build AA supermatrix
+seqtui gene*.fasta -s -t -o supermatrix_AA.fasta
+```
+
+**ID matching with delimiter** — when sequence names have prefixes/suffixes:
+
+```bash
+# Files have: Human_ENS001, Human_LOC789, Mouse_ENS002, Mouse_LOC456...
+# Match on species name (before "_")
+seqtui gene1.fasta gene2.fasta -d "_" -s -o supermatrix.fasta
+# Output sequences: Human, Mouse, ... (matched across files)
+```
 
 ## Supported Formats
 
