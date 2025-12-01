@@ -2,25 +2,26 @@
 SeqTUI - Developer Reference Document
 ================================================================================
 
-Last updated: November 2025
+Last updated: December 2025
 
 This document provides context for continuing development on SeqTUI, a terminal-
-based sequence alignment viewer (FASTA, PHYLIP, NEXUS) written in Rust. It 
+based sequence viewer and toolkit (FASTA, PHYLIP, NEXUS) written in Rust. It 
 captures key design decisions, architecture choices, and lessons learned.
 
 ================================================================================
 PROJECT GOAL
 ================================================================================
 
-SeqTUI aims to be a fast, memory-efficient terminal viewer for large 
-sequence alignments (FASTA, PHYLIP, NEXUS), inspired by Seaview but for 
-the terminal. Key goals:
+SeqTUI aims to be a fast, memory-efficient terminal viewer AND command-line 
+toolkit for sequences (aligned or not). Key goals:
 
 1. Handle very large files (500MB+, millions of nucleotides per sequence)
 2. Vim-style navigation for bioinformaticians comfortable with CLI
 3. Support NT→AA translation with all 33 NCBI genetic codes
 4. Color-coded display matching Seaview conventions
 5. Minimal dependencies, easy deployment on HPC clusters
+6. CLI mode for batch processing (convert, translate, concatenate)
+7. Supermatrix building for phylogenetics (multi-gene concatenation)
 
 ================================================================================
 ARCHITECTURE
@@ -382,13 +383,92 @@ Potential enhancements:
 3. Consensus sequence display
 4. Export selected region
 5. Mouse support for clicking
-6. Reverse complement view
+6. Reverse complement view (frames 4-6 for translation)
 7. Multiple file comparison
+8. Memory-efficient supermatrix (streaming write instead of full in-memory)
+9. -f option for delimiter field selection (-f1,2 like Unix cut)
 
 Performance notes:
 - Initial load of 500MB file: ~2-3 seconds
 - Translation of 500MB: ~1 second
 - Memory usage: stable during interactive use
+
+================================================================================
+CLI MODE & CONCATENATION (main.rs)
+================================================================================
+
+SeqTUI has two modes:
+
+1. TUI MODE (default)
+   - Interactive viewer with Vim-style navigation
+   - Triggered when no -o/--output is specified
+
+2. CLI MODE (with -o)
+   - Batch processing: convert, translate, concatenate
+   - Single-line FASTA output (pipe-friendly)
+   - Triggered by -o/--output
+
+CLI OPTIONS:
+  -o, --output        Output file (or "-" for stdout)
+  -t, --translate     Translate NT to AA
+  -g, --genetic-code  Genetic code (1-33, default: 1)
+  -r, --reading-frame Reading frame (1-3, default: 1)
+  -d, --delimiter     ID matching delimiter (uses first field)
+  -s, --supermatrix   Fill missing sequences with gaps
+  -p, --partitions    Write partition file
+
+SINGLE FILE CLI:
+  run_cli_mode() - parse, optionally translate, write FASTA
+
+MULTI-FILE CONCATENATION:
+  run_concatenation_mode() - merge sequences by ID matching
+
+CONCATENATION ALGORITHM:
+  Pass 1: Collect all unique sequence IDs across files
+          Validate alignments if -s (supermatrix mode)
+          Record alignment length per file (for gap filling)
+  
+  Pass 2: For each file:
+          - Parse and optionally translate
+          - For each known ID: append sequence or gaps (if -s and missing)
+          - Track partition boundaries
+  
+  Output: Write concatenated sequences + optional partition file
+
+ID MATCHING:
+  - Default: full sequence ID
+  - With -d "_": extract first field before delimiter
+  - Example: "Human_ENS001" with -d "_" matches "Human_LOC789" on "Human"
+  - extract_key(id, delimiter) function handles this
+
+VALIDATION:
+  - -s and -p require multiple input files
+  - -s requires aligned sequences (same length within each file)
+  - Clear error messages for invalid combinations
+
+================================================================================
+TRANSLATION IMPROVEMENTS
+================================================================================
+
+AMBIGUITY CODE HANDLING (genetic_code.rs):
+Translation now handles common nucleotide ambiguity codes:
+  - R = A or G (purine)
+  - Y = T or C (pyrimidine)  
+  - N or ? = any base
+
+Rules:
+  - Only 1 ambiguous position per codon (practical case)
+  - All possible translations must yield the same AA
+  - Otherwise returns 'X'
+
+Examples:
+  CTR → L (CTA=Leu, CTG=Leu, both Leu)
+  GGN → G (all 4 codons = Gly)
+  ATN → X (ATT/ATC/ATA=Ile, ATG=Met, mixed result)
+
+Implementation:
+  ambiguity_expansions(b) returns possible base indices
+  translate_codon() expands and checks all combinations
 
 ================================================================================
 DEVELOPMENT WORKFLOW
