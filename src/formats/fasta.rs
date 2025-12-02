@@ -52,7 +52,7 @@ pub type FastaResult<T> = Result<T, FastaError>;
 /// # Examples
 ///
 /// ```no_run
-/// use seqtui::fasta::parse_fasta_file;
+/// use seqtui::formats::fasta::parse_fasta_file;
 ///
 /// let alignment = parse_fasta_file("sequences.fasta").unwrap();
 /// println!("Loaded {} sequences", alignment.sequence_count());

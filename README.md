@@ -216,9 +216,9 @@ src/
 ├── main.rs         # Entry point and CLI argument parsing
 ├── lib.rs          # Module exports
 ├── model.rs        # Data structures (Sequence, Alignment, Viewport, AppState)
-├── fasta.rs        # FASTA file parsing
 ├── formats/        # Multi-format support
 │   ├── mod.rs      # Format detection and unified parsing
+│   ├── fasta.rs    # FASTA format parser
 │   ├── nexus.rs    # NEXUS format parser (token-based)
 │   └── phylip.rs   # PHYLIP format parser
 ├── event.rs        # Keyboard event handling

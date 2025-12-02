@@ -21,7 +21,6 @@
 
 pub mod controller;
 pub mod event;
-pub mod fasta;
 pub mod formats;
 pub mod genetic_code;
 pub mod model;

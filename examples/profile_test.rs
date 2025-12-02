@@ -19,7 +19,7 @@ fn main() {
     
     // Parse
     let start = Instant::now();
-    let alignment = seqtui::fasta::parse_fasta_str(&content).unwrap();
+    let alignment = seqtui::formats::fasta::parse_fasta_str(&content).unwrap();
     println!("Parse: {:?}, {} sequences, {} length", 
              start.elapsed(), 
              alignment.sequence_count(),

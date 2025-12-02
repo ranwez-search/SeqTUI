@@ -10,6 +10,7 @@
 //! 2. File extension
 //! 3. Content-based detection
 
+pub mod fasta;
 pub mod nexus;
 pub mod phylip;
 
@@ -20,7 +21,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::fasta::parse_fasta_fast;
+use fasta::parse_fasta_fast;
 use crate::model::Alignment;
 
 /// Detected file format.
@@ -63,7 +64,7 @@ pub enum ParseError {
     AmbiguousFormat { possible: String, suggestion: String },
 
     #[error("FASTA error: {0}")]
-    FastaError(#[from] crate::fasta::FastaError),
+    FastaError(#[from] fasta::FastaError),
 
     #[error("PHYLIP error: {0}")]
     PhylipError(#[from] phylip::PhylipError),
