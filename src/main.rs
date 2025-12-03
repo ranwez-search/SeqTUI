@@ -131,8 +131,9 @@ fn run_concatenation_mode(
     genetic_code: u8,
     reading_frame: u8,
     delimiter: Option<&str>,
-    supermatrix: bool,
+    gap_char: Option<char>,  // None = no gap filling, Some(c) = fill with c
     partitions_file: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
     
@@ -149,6 +150,7 @@ fn run_concatenation_mode(
     // Pass 1: Collect all sequence IDs and validate alignments (if supermatrix)
     let mut all_keys: Vec<String> = Vec::new();
     let mut seen_keys: HashSet<String> = HashSet::new();
+    let mut key_file_count: HashMap<String, usize> = HashMap::new(); // count files per key
     let mut file_lengths: Vec<usize> = Vec::new(); // alignment length per file
     
     eprintln!("Pass 1: Scanning {} files...", files.len());
@@ -156,8 +158,8 @@ fn run_concatenation_mode(
     for file_path in files {
         let alignment = parse_file_with_options(file_path, forced_format)?;
         
-        // Validate alignment if supermatrix mode
-        if supermatrix && !alignment.is_valid_alignment {
+        // Validate alignment if supermatrix mode (gap filling enabled)
+        if gap_char.is_some() && !alignment.is_valid_alignment {
             anyhow::bail!(
                 "File {} is not a valid alignment (sequences have different lengths). \
                 Supermatrix mode requires aligned sequences.",
@@ -180,17 +182,59 @@ fn run_concatenation_mode(
         };
         file_lengths.push(aln_len);
         
-        // Collect unique keys
+        // Collect keys and track which files they appear in
+        let mut keys_in_this_file: HashSet<String> = HashSet::new();
         for seq in &alignment.sequences {
             let key = extract_key(&seq.id, delimiter);
             if !seen_keys.contains(&key) {
                 seen_keys.insert(key.clone());
-                all_keys.push(key);
+                all_keys.push(key.clone());
             }
+            keys_in_this_file.insert(key);
+        }
+        // Increment file count for each key seen in this file
+        for key in keys_in_this_file {
+            *key_file_count.entry(key).or_insert(0) += 1;
         }
     }
     
-    eprintln!("Found {} unique sequence IDs across {} files", all_keys.len(), files.len());
+    let output_count = all_keys.len();
+    // Count IDs that appear in only one file (orphans)
+    let orphan_count = key_file_count.values().filter(|&&c| c == 1).count();
+    
+    eprintln!("Found {} output sequence IDs ({} appear in only one file)", 
+              output_count, orphan_count);
+    
+    // Check for suspicious ID matching: if >30% of output IDs are orphans (only in 1 file)
+    let orphan_ratio = orphan_count as f64 / output_count as f64;
+    if orphan_ratio > 0.30 && !force {
+        // Write log file with all output IDs
+        let log_path = "seqtui_ids.log";
+        let mut log_file = std::fs::File::create(log_path)?;
+        use std::io::Write;
+        writeln!(log_file, "# Output sequence IDs from concatenation")?;
+        writeln!(log_file, "# {} IDs total, {} appear in only one file ({:.1}%)", 
+                 output_count, orphan_count, orphan_ratio * 100.0)?;
+        writeln!(log_file, "# IDs marked with * appear in only one file")?;
+        writeln!(log_file, "#")?;
+        for key in &all_keys {
+            let count = key_file_count.get(key).unwrap_or(&0);
+            if *count == 1 {
+                writeln!(log_file, "{}*", key)?;
+            } else {
+                writeln!(log_file, "{}", key)?;
+            }
+        }
+        
+        anyhow::bail!(
+            "Suspicious ID matching: {:.0}% of output IDs appear in only one file ({} / {}).\n\
+            This often means sequence names don't match across files.\n\
+            - Check if you need -d/--delimiter to extract a common prefix\n\
+            - List of output IDs written to: {} (orphans marked with *)\n\
+            - Use --force to proceed anyway",
+            orphan_ratio * 100.0, orphan_count, output_count, log_path
+        );
+    }
     
     // Pass 2: Build concatenated sequences
     // seq_data: key -> concatenated sequence bytes
@@ -238,12 +282,12 @@ fn run_concatenation_mode(
         for key in &all_keys {
             if let Some(seq_bytes) = file_seqs.get(key) {
                 seq_data.get_mut(key).unwrap().extend_from_slice(seq_bytes);
-            } else if supermatrix {
-                // Fill with gaps
-                let gaps = vec![b'-'; expected_len];
+            } else if let Some(fill_char) = gap_char {
+                // Fill with specified gap character
+                let gaps = vec![fill_char as u8; expected_len];
                 seq_data.get_mut(key).unwrap().extend_from_slice(&gaps);
             }
-            // If not supermatrix and sequence is missing, we simply don't extend
+            // If no gap_char and sequence is missing, we simply don't extend
             // This means sequences may have different final lengths
         }
         
@@ -264,8 +308,8 @@ fn run_concatenation_mode(
         );
     }
     
-    // Validate: if not supermatrix, check that all sequences have the same length
-    if !supermatrix {
+    // Validate: if not filling gaps, check that all sequences have the same length
+    if gap_char.is_none() {
         let total_len: usize = file_lengths.iter().sum();
         for (key, data) in &seq_data {
             if data.len() != total_len {
@@ -376,14 +420,21 @@ struct Args {
     #[arg(short = 'd', long = "delimiter")]
     delimiter: Option<String>,
 
-    /// Supermatrix mode: fill missing sequences with gaps
+    /// Supermatrix mode: fill missing sequences with a gap character (default: '-')
     /// Requires all sequences in each file to have the same length (aligned)
-    #[arg(short = 's', long = "supermatrix")]
-    supermatrix: bool,
+    /// Use -s for default '-', or -s '?' or -s '.' for other characters
+    /// Note: shell special characters like ? may need quoting: -s '?'
+    #[arg(short = 's', long = "supermatrix", default_missing_value = "-", num_args = 0..=1)]
+    supermatrix: Option<String>,
 
     /// Write partition file (gene boundaries for phylogenetic analysis)
     #[arg(short = 'p', long = "partitions")]
     partitions: Option<String>,
+
+    /// Force concatenation even if sequence ID matching looks suspicious
+    /// (more than 30% of output IDs appear in only one file)
+    #[arg(long = "force")]
+    force: bool,
 }
 
 fn main() -> Result<()> {
@@ -401,9 +452,27 @@ fn main() -> Result<()> {
         anyhow::bail!("Genetic code must be 1-33 (got {})", args.genetic_code);
     }
 
+    // Parse and validate supermatrix gap character
+    let gap_char: Option<char> = match &args.supermatrix {
+        None => None,
+        Some(s) => {
+            if s.len() != 1 {
+                anyhow::bail!(
+                    "-s/--supermatrix requires a single character (got '{}', {} chars)",
+                    s, s.len()
+                );
+            }
+            let c = s.chars().next().unwrap();
+            if !c.is_ascii() {
+                anyhow::bail!("-s/--supermatrix character must be ASCII (got '{}')", c);
+            }
+            Some(c)
+        }
+    };
+
     // Validate: supermatrix/partitions/delimiter require output mode
     if args.output.is_none() {
-        if args.supermatrix {
+        if args.supermatrix.is_some() {
             anyhow::bail!("-s/--supermatrix requires -o/--output");
         }
         if args.partitions.is_some() {
@@ -416,7 +485,7 @@ fn main() -> Result<()> {
 
     // Validate: supermatrix/partitions only make sense with multiple files
     if args.files.len() == 1 {
-        if args.supermatrix {
+        if args.supermatrix.is_some() {
             anyhow::bail!("-s/--supermatrix requires multiple input files");
         }
         if args.partitions.is_some() {
@@ -438,8 +507,9 @@ fn main() -> Result<()> {
             args.genetic_code,
             args.reading_frame,
             args.delimiter.as_deref(),
-            args.supermatrix,
+            gap_char,
             args.partitions.as_deref(),
+            args.force,
         )?;
     } else {
         // Single file mode

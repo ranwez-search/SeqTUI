@@ -112,8 +112,9 @@ seqtui gene1.fasta gene2.fasta -d "_" -s -o supermatrix.fasta
 | `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
 | `-f` | `--format` | Force input format (fasta, phylip, nexus, auto) |
 | `-d` | `--delimiter` | Delimiter for ID matching (uses first field) |
-| `-s` | `--supermatrix` | Fill missing sequences with gaps |
+| `-s` | `--supermatrix` | Fill missing sequences (default: `-`, or `-s '?'`, `-s '.'`) |
 | `-p` | `--partitions` | Write partition file (gene boundaries) |
+| | `--force` | Bypass ID matching check (when >30% orphan IDs) |
 
 ---
 

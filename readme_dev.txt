@@ -414,8 +414,9 @@ CLI OPTIONS:
   -g, --genetic-code  Genetic code (1-33, default: 1)
   -r, --reading-frame Reading frame (1-3, default: 1)
   -d, --delimiter     ID matching delimiter (uses first field)
-  -s, --supermatrix   Fill missing sequences with gaps
+  -s, --supermatrix   Fill missing sequences (default '-', or custom char)
   -p, --partitions    Write partition file
+  --force             Bypass orphan ID check (no short option)
 
 SINGLE FILE CLI:
   run_cli_mode() - parse, optionally translate, write FASTA
@@ -425,8 +426,12 @@ MULTI-FILE CONCATENATION:
 
 CONCATENATION ALGORITHM:
   Pass 1: Collect all unique sequence IDs across files
+          Track how many files each ID appears in (for orphan detection)
           Validate alignments if -s (supermatrix mode)
           Record alignment length per file (for gap filling)
+          Check orphan ratio: if >30% IDs appear in only 1 file, abort
+            - Writes seqtui_ids.log with all IDs (orphans marked with *)
+            - Suggests -d delimiter or --force to proceed
   
   Pass 2: For each file:
           - Parse and optionally translate
@@ -441,9 +446,16 @@ ID MATCHING:
   - Example: "Human_ENS001" with -d "_" matches "Human_LOC789" on "Human"
   - extract_key(id, delimiter) function handles this
 
+ORPHAN ID DETECTION:
+  - Orphan = ID that appears in only one input file
+  - If orphan_count / total_output_ids > 0.30, likely delimiter problem
+  - Error message suggests -d and writes IDs to seqtui_ids.log
+  - --force bypasses this check
+
 VALIDATION:
   - -s and -p require multiple input files
   - -s requires aligned sequences (same length within each file)
+  - -s accepts optional fill character (default '-', or '?', '.', etc.)
   - Clear error messages for invalid combinations
 
 ================================================================================
