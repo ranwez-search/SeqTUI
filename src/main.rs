@@ -122,6 +122,239 @@ fn extract_key(id: &str, delimiter: Option<&str>) -> String {
     }
 }
 
+/// Extracts the file basename (without extension) for use as CHROM name
+fn get_chrom_name(file_path: &PathBuf) -> String {
+    file_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Runs VCF mode: extract biallelic SNPs with minimum flanking distance
+fn run_vcf_mode(
+    files: &[PathBuf],
+    forced_format: Option<FileFormat>,
+    output: &str,
+    min_dist: usize,
+    delimiter: Option<&str>,
+) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+    
+    // Pass 1: Collect all sequence IDs and identify reference
+    let mut all_keys: Vec<String> = Vec::new();
+    let mut seen_keys: HashSet<String> = HashSet::new();
+    let mut reference_key: Option<String> = None;
+    
+    eprintln!("Pass 1: Scanning {} file(s) for sequence IDs...", files.len());
+    
+    for (file_idx, file_path) in files.iter().enumerate() {
+        let alignment = parse_file_with_options(file_path, forced_format)?;
+        
+        // Validate: must be a valid alignment
+        if !alignment.is_valid_alignment {
+            anyhow::bail!(
+                "File {} is not a valid alignment (sequences have different lengths). \
+                VCF mode requires aligned sequences.",
+                file_path.display()
+            );
+        }
+        
+        // Validate: must be nucleotide
+        if alignment.sequence_type != SequenceType::Nucleotide {
+            anyhow::bail!(
+                "File {} is not a nucleotide alignment. VCF mode requires nucleotide sequences.",
+                file_path.display()
+            );
+        }
+        
+        // First sequence of first file is the reference
+        if file_idx == 0 {
+            if let Some(first_seq) = alignment.sequences.first() {
+                let key = extract_key(&first_seq.id, delimiter);
+                reference_key = Some(key.clone());
+                seen_keys.insert(key.clone());
+                all_keys.push(key);
+            }
+        }
+        
+        // Collect all other keys
+        for seq in &alignment.sequences {
+            let key = extract_key(&seq.id, delimiter);
+            if !seen_keys.contains(&key) {
+                seen_keys.insert(key.clone());
+                all_keys.push(key);
+            }
+        }
+    }
+    
+    let reference_key = reference_key.ok_or_else(|| {
+        anyhow::anyhow!("No sequences found in input files")
+    })?;
+    
+    // Sort keys alphabetically, but keep reference first
+    let mut sample_keys: Vec<String> = all_keys.iter()
+        .filter(|k| *k != &reference_key)
+        .cloned()
+        .collect();
+    sample_keys.sort();
+    
+    // Final order: reference first, then sorted samples
+    let all_keys: Vec<String> = std::iter::once(reference_key.clone())
+        .chain(sample_keys)
+        .collect();
+    
+    eprintln!("Found {} sequences, reference: {}", all_keys.len(), reference_key);
+    
+    // Prepare VCF output
+    let mut vcf_lines: Vec<String> = Vec::new();
+    
+    // Pass 2: Process each file to find SNPs
+    eprintln!("Pass 2: Scanning for biallelic SNPs (min flanking distance: {})...", min_dist);
+    
+    for file_path in files {
+        let alignment = parse_file_with_options(file_path, forced_format)?;
+        let chrom = get_chrom_name(file_path);
+        let aln_len = alignment.alignment_length();
+        
+        // Build map: key -> sequence bytes
+        let mut seq_map: HashMap<String, &[u8]> = HashMap::new();
+        for seq in &alignment.sequences {
+            let key = extract_key(&seq.id, delimiter);
+            seq_map.insert(key, seq.as_bytes());
+        }
+        
+        // Check if reference is in this file
+        if !seq_map.contains_key(&reference_key) {
+            eprintln!("  {} : skipped (reference '{}' not found)", chrom, reference_key);
+            continue;
+        }
+        
+        // Single pass: collect alleles using bit flags and track if site has only real NTs
+        // Bit flags: A=1, C=2, G=4, T=8
+        let mut real_nt_only: Vec<bool> = vec![true; aln_len];
+        let mut seen_nt: Vec<u8> = vec![0; aln_len];
+        
+        for seq in &alignment.sequences {
+            let seq_bytes = seq.as_bytes();
+            for pos in 0..aln_len {
+                if real_nt_only[pos] {
+                    match seq_bytes[pos].to_ascii_uppercase() {
+                        b'A' => seen_nt[pos] |= 1,
+                        b'C' => seen_nt[pos] |= 2,
+                        b'G' => seen_nt[pos] |= 4,
+                        b'T' => seen_nt[pos] |= 8,
+                        b'N' | b'?' => {} // Missing data, ignore
+                        _ => real_nt_only[pos] = false, // Gap or other -> exclude
+                    }
+                }
+            }
+        }
+        
+        // Derive polymorphic sites: !real_nt_only OR seen_nt has >1 bit set
+        // Polymorphic sites reset the flanking distance counter
+        let mut reset: Vec<bool> = vec![false; aln_len];
+        for pos in 0..aln_len {
+            reset[pos] = !real_nt_only[pos] || seen_nt[pos].count_ones() > 1;
+        }
+        
+        // Compute distLeft: distance to nearest polymorphic site on the left
+        let mut dist_left: Vec<usize> = vec![0; aln_len];
+        for i in 1..aln_len {
+            dist_left[i] = if reset[i - 1] { 0 } else { dist_left[i - 1] + 1 };
+        }
+        
+        // Compute distRight: distance to nearest polymorphic site on the right
+        let mut dist_right: Vec<usize> = vec![0; aln_len];
+        for i in (0..aln_len - 1).rev() {
+            dist_right[i] = if reset[i + 1] { 0 } else { dist_right[i + 1] + 1 };
+        }
+        
+        // Write VCF lines for biallelic sites with sufficient flanking distance
+        // Biallelic = real_nt_only AND seen_nt has exactly 2 bits set
+        let mut snp_count = 0;
+        for pos in 0..aln_len {
+            // Check biallelic: real_nt_only AND exactly 2 alleles AND sufficient flanking distance
+            if !real_nt_only[pos] || seen_nt[pos].count_ones() != 2 
+               || dist_left[pos] < min_dist || dist_right[pos] < min_dist {
+                continue;
+            }
+            
+            // Decode alleles from bit flags
+            let allele_bits = seen_nt[pos];
+            let alleles: Vec<u8> = [b'A', b'C', b'G', b'T']
+                .iter()
+                .zip([1u8, 2, 4, 8])
+                .filter(|(_, bit)| allele_bits & bit != 0)
+                .map(|(base, _)| *base)
+                .collect();
+            
+            // Get REF from reference sequence
+            let ref_seq = seq_map.get(&reference_key).unwrap();
+            let ref_base = ref_seq[pos].to_ascii_uppercase();
+            let alt_base = if alleles[0] == ref_base { alleles[1] } else { alleles[0] };
+            
+            // Build genotypes for all samples
+            let gt_strings: Vec<String> = all_keys.iter()
+                .map(|key| {
+                    if let Some(seq) = seq_map.get(key) {
+                        let b = seq[pos].to_ascii_uppercase();
+                        if b == ref_base { "0".to_string() }
+                        else if b == alt_base { "1".to_string() }
+                        else { ".".to_string() } // N, ?, or other -> missing
+                    } else {
+                        ".".to_string() // Sequence not in file -> missing
+                    }
+                })
+                .collect();
+            
+            // VCF line: CHROM POS ID REF ALT QUAL FILTER INFO FORMAT samples...
+            let vcf_line = format!(
+                "{}\t{}\t.\t{}\t{}\t.\tPASS\tDL={};DR={}\tGT\t{}",
+                chrom,
+                pos + 1, // 1-based position
+                ref_base as char,
+                alt_base as char,
+                dist_left[pos],
+                dist_right[pos],
+                gt_strings.join("\t")
+            );
+            vcf_lines.push(vcf_line);
+            snp_count += 1;
+        }
+        
+        eprintln!("  {} : {} sites, {} biallelic SNPs selected", chrom, aln_len, snp_count);
+    }
+    
+    // Write VCF output
+    let vcf_header = format!(
+        "##fileformat=VCFv4.2\n\
+         ##INFO=<ID=DL,Number=1,Type=Integer,Description=\"Distance to nearest polymorphic site on the left\">\n\
+         ##INFO=<ID=DR,Number=1,Type=Integer,Description=\"Distance to nearest polymorphic site on the right\">\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{}",
+        all_keys.join("\t")
+    );
+    
+    if output == "-" {
+        let stdout = io::stdout();
+        let mut handle = stdout.lock();
+        writeln!(handle, "{}", vcf_header)?;
+        for line in &vcf_lines {
+            writeln!(handle, "{}", line)?;
+        }
+    } else {
+        let mut file = std::fs::File::create(output)?;
+        writeln!(file, "{}", vcf_header)?;
+        for line in &vcf_lines {
+            writeln!(file, "{}", line)?;
+        }
+        eprintln!("Wrote {} SNPs to {}", vcf_lines.len(), output);
+    }
+    
+    Ok(())
+}
+
 /// Runs concatenation mode: parse multiple files and concatenate sequences by ID.
 fn run_concatenation_mode(
     files: &[PathBuf],
@@ -430,6 +663,11 @@ struct Args {
     #[arg(short = 'p', long = "partitions")]
     partitions: Option<String>,
 
+    /// Extract biallelic SNPs to VCF with minimum flanking monomorphic distance
+    /// Example: -v 300 requires 300 consecutive monomorphic sites on each side
+    #[arg(short = 'v', long = "vcf", value_name = "MIN_DIST")]
+    vcf: Option<usize>,
+
     /// Force concatenation even if sequence ID matching looks suspicious
     /// (more than 30% of output IDs appear in only one file)
     #[arg(long = "force")]
@@ -477,6 +715,9 @@ fn main() -> Result<()> {
         if args.partitions.is_some() {
             anyhow::bail!("-p/--partitions requires -o/--output");
         }
+        if args.vcf.is_some() {
+            anyhow::bail!("-v/--vcf requires -o/--output");
+        }
         if args.delimiter.is_some() && args.files.len() > 1 {
             anyhow::bail!("-d/--delimiter with multiple files requires -o/--output");
         }
@@ -490,6 +731,31 @@ fn main() -> Result<()> {
         if args.partitions.is_some() {
             anyhow::bail!("-p/--partitions requires multiple input files");
         }
+    }
+
+    // Validate: VCF mode is incompatible with other CLI options
+    if args.vcf.is_some() {
+        if args.translate {
+            anyhow::bail!("-v/--vcf is incompatible with -t/--translate");
+        }
+        if args.supermatrix.is_some() {
+            anyhow::bail!("-v/--vcf is incompatible with -s/--supermatrix");
+        }
+        if args.partitions.is_some() {
+            anyhow::bail!("-v/--vcf is incompatible with -p/--partitions");
+        }
+    }
+
+    // VCF mode: extract biallelic SNPs
+    if let Some(min_dist) = args.vcf {
+        let output = args.output.as_ref().unwrap(); // Already validated above
+        return run_vcf_mode(
+            &args.files,
+            forced_format,
+            output,
+            min_dist,
+            args.delimiter.as_deref(),
+        );
     }
 
     // Multiple files: concatenation mode (requires -o)
@@ -539,4 +805,147 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    
+    /// Helper to run VCF mode and capture output lines (excluding header)
+    fn run_vcf_test(files: &[&str], min_dist: usize) -> Vec<String> {
+        let file_paths: Vec<PathBuf> = files.iter()
+            .map(|f| PathBuf::from(format!("test_data/vcf_tests/{}", f)))
+            .collect();
+        
+        // Use unique temp file per test to avoid race conditions
+        let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let tmp_output = format!("/tmp/seqtui_test_vcf_{}.vcf", test_id);
+        run_vcf_mode(&file_paths, None, &tmp_output, min_dist, None).unwrap();
+        
+        // Read and return data lines (skip header)
+        let file = std::fs::File::open(&tmp_output).unwrap();
+        let reader = std::io::BufReader::new(file);
+        let lines: Vec<String> = reader.lines()
+            .filter_map(|l| l.ok())
+            .filter(|l| !l.starts_with('#'))
+            .collect();
+        
+        // Clean up temp file
+        let _ = std::fs::remove_file(&tmp_output);
+        
+        lines
+    }
+    
+    /// Helper to parse a VCF data line
+    fn parse_vcf_line(line: &str) -> (String, usize, char, char, usize, usize, Vec<String>) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        let chrom = parts[0].to_string();
+        let pos: usize = parts[1].parse().unwrap();
+        let ref_base = parts[3].chars().next().unwrap();
+        let alt_base = parts[4].chars().next().unwrap();
+        
+        // Parse INFO field for DL and DR
+        let info = parts[7];
+        let mut dl = 0;
+        let mut dr = 0;
+        for field in info.split(';') {
+            if field.starts_with("DL=") {
+                dl = field[3..].parse().unwrap();
+            } else if field.starts_with("DR=") {
+                dr = field[3..].parse().unwrap();
+            }
+        }
+        
+        // Genotypes start at column 9
+        let genotypes: Vec<String> = parts[9..].iter().map(|s| s.to_string()).collect();
+        
+        (chrom, pos, ref_base, alt_base, dl, dr, genotypes)
+    }
+    
+    #[test]
+    fn test_vcf_biallelic_snp() {
+        // 62 sites, SNP at position 31 (G/T)
+        // With min_dist=30: should select the SNP (30 monomorphic on each side)
+        let lines = run_vcf_test(&["biallelic_snp.fa"], 30);
+        assert_eq!(lines.len(), 1, "Should find exactly 1 SNP");
+        
+        let (chrom, pos, ref_base, alt_base, dl, dr, genotypes) = parse_vcf_line(&lines[0]);
+        assert_eq!(chrom, "biallelic_snp");
+        assert_eq!(pos, 31);
+        assert_eq!(ref_base, 'G');
+        assert_eq!(alt_base, 'T');
+        assert_eq!(dl, 30);
+        assert_eq!(dr, 31);
+        assert_eq!(genotypes, vec!["0", "1", "0"]);
+    }
+    
+    #[test]
+    fn test_vcf_triallelic_excluded() {
+        // 62 sites, position 31 has G/T/C (triallelic)
+        // Should NOT select (not biallelic)
+        let lines = run_vcf_test(&["triallelic_snp.fa"], 30);
+        assert_eq!(lines.len(), 0, "Triallelic site should be excluded");
+    }
+    
+    #[test]
+    fn test_vcf_two_snps_close_excluded() {
+        // SNPs at positions 15 and 31 (too close for min_dist=30)
+        // Neither should pass
+        let lines = run_vcf_test(&["two_snps_close.fa"], 30);
+        assert_eq!(lines.len(), 0, "Close SNPs should both be excluded");
+    }
+    
+    #[test]
+    fn test_vcf_two_snps_far_excluded() {
+        // SNPs at positions 31 and 50 (too close for min_dist=30)
+        // Neither should pass (only 18 sites between them)
+        let lines = run_vcf_test(&["two_snps_far.fa"], 30);
+        assert_eq!(lines.len(), 0, "SNPs with insufficient spacing should be excluded");
+    }
+    
+    #[test]
+    fn test_vcf_three_snps_small_dist() {
+        // SNPs at positions 15, 31, 50 with min_dist=5
+        // All three should be selected
+        let lines = run_vcf_test(&["three_snps.fa"], 5);
+        assert_eq!(lines.len(), 3, "All 3 SNPs should be selected with min_dist=5");
+        
+        // Check positions and distances
+        let (_, pos1, _, _, dl1, dr1, _) = parse_vcf_line(&lines[0]);
+        let (_, pos2, _, _, dl2, dr2, _) = parse_vcf_line(&lines[1]);
+        let (_, pos3, _, _, dl3, dr3, _) = parse_vcf_line(&lines[2]);
+        
+        assert_eq!(pos1, 15);
+        assert_eq!(pos2, 31);
+        assert_eq!(pos3, 50);
+        
+        // DL/DR values
+        assert_eq!(dl1, 14); // 14 sites before pos 15
+        assert_eq!(dr1, 15); // 15 sites to next SNP at 31
+        assert_eq!(dl2, 15); // 15 sites from SNP at 15
+        assert_eq!(dr2, 18); // 18 sites to SNP at 50
+        assert_eq!(dl3, 18); // 18 sites from SNP at 31
+        assert_eq!(dr3, 12); // 12 sites remaining
+    }
+    
+    #[test]
+    fn test_vcf_snp_with_n_missing_genotype() {
+        // SNP with N in one sample -> missing genotype but site kept
+        let lines = run_vcf_test(&["snp_with_n.fa"], 30);
+        assert_eq!(lines.len(), 1, "SNP with N should still be selected");
+        
+        let (_, _, _, _, _, _, genotypes) = parse_vcf_line(&lines[0]);
+        assert_eq!(genotypes, vec!["0", "1", "."], "Sample with N should have missing genotype");
+    }
+    
+    #[test]
+    fn test_vcf_snp_with_gap_excluded() {
+        // SNP with gap in one sample -> site excluded entirely
+        let lines = run_vcf_test(&["snp_with_gap.fa"], 30);
+        assert_eq!(lines.len(), 0, "SNP with gap should be excluded");
+    }
 }
