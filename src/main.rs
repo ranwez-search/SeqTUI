@@ -198,6 +198,9 @@ fn run_concatenation_mode(
         }
     }
     
+    // Sort keys alphabetically for canonical output
+    all_keys.sort();
+    
     let output_count = all_keys.len();
     // Count IDs that appear in only one file (orphans)
     let orphan_count = key_file_count.values().filter(|&&c| c == 1).count();
@@ -410,8 +413,7 @@ struct Args {
     #[arg(short = 'g', long = "genetic-code", default_value = "1")]
     genetic_code: u8,
 
-    /// Reading frame for translation (1-6, default: 1)
-    /// Frames 1-3 are forward (+1, +2, +3), 4-6 are reverse complement
+    /// Reading frame for translation (1-3, default: 1)
     #[arg(short = 'r', long = "reading-frame", default_value = "1")]
     reading_frame: u8,
 
@@ -420,11 +422,8 @@ struct Args {
     #[arg(short = 'd', long = "delimiter")]
     delimiter: Option<String>,
 
-    /// Supermatrix mode: fill missing sequences with a gap character (default: '-')
-    /// Requires all sequences in each file to have the same length (aligned)
-    /// Use -s for default '-', or -s '?' or -s '.' for other characters
-    /// Note: shell special characters like ? may need quoting: -s '?'
-    #[arg(short = 's', long = "supermatrix", default_missing_value = "-", num_args = 0..=1)]
+    /// Fill missing sequences with gap character (default: '-', or -s '?' -s '.')
+    #[arg(short = 's', long = "supermatrix", value_name = "CHAR", default_missing_value = "-", num_args = 0..=1)]
     supermatrix: Option<String>,
 
     /// Write partition file (gene boundaries for phylogenetic analysis)
@@ -442,9 +441,9 @@ fn main() -> Result<()> {
 
     let forced_format: Option<FileFormat> = args.format.into();
 
-    // Validate reading frame (1-6)
-    if args.reading_frame < 1 || args.reading_frame > 6 {
-        anyhow::bail!("Reading frame must be 1-6 (got {})", args.reading_frame);
+    // Validate reading frame (1-3)
+    if args.reading_frame < 1 || args.reading_frame > 3 {
+        anyhow::bail!("Reading frame must be 1-3 (got {})", args.reading_frame);
     }
 
     // Validate genetic code (1-33, with some gaps)
