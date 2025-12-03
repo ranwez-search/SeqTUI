@@ -12,14 +12,53 @@
 use std::ops::Range;
 use std::path::PathBuf;
 
-/// Type of biological sequence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SequenceType {
-    /// DNA/RNA nucleotide sequences (A, C, G, T/U)
-    #[default]
-    Nucleotide,
-    /// Amino acid/protein sequences
-    AminoAcid,
+/// Type of biological sequence with nucleotide ratio.
+/// The ratio indicates the proportion of nucleotide characters (ACGTUN) found.
+/// - ratio > 0.8: displayed with nucleotide colors
+/// - ratio < 0.5: likely amino acid, error for NT-requiring operations
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SequenceType {
+    /// Ratio of nucleotide characters (0.0 to 1.0)
+    pub nt_ratio: f64,
+}
+
+impl Default for SequenceType {
+    fn default() -> Self {
+        Self { nt_ratio: 1.0 }
+    }
+}
+
+impl SequenceType {
+    /// Creates a new SequenceType with the given NT ratio.
+    pub fn new(nt_ratio: f64) -> Self {
+        Self { nt_ratio }
+    }
+
+    /// Returns true if this appears to be nucleotide (>80% NT chars).
+    /// Used for display coloring.
+    #[inline]
+    pub fn is_nucleotide(&self) -> bool {
+        self.nt_ratio > 0.8
+    }
+
+    /// Returns true if this appears to be amino acid (≤80% NT chars).
+    #[inline]
+    pub fn is_amino_acid(&self) -> bool {
+        !self.is_nucleotide()
+    }
+
+    /// Returns true if this is likely NOT nucleotide (<50% NT chars).
+    /// Used for error checking in NT-requiring operations (translation, VCF).
+    #[inline]
+    pub fn is_likely_not_nucleotide(&self) -> bool {
+        self.nt_ratio < 0.5
+    }
+
+    // Legacy constants for compatibility
+    /// Nucleotide sequence type (100% NT ratio)
+    pub const NUCLEOTIDE: SequenceType = SequenceType { nt_ratio: 1.0 };
+    /// Amino acid sequence type (0% NT ratio)
+    pub const AMINO_ACID: SequenceType = SequenceType { nt_ratio: 0.0 };
 }
 
 /// Loading state for async operations.
@@ -347,48 +386,53 @@ impl Alignment {
         }
     }
 
-    /// Detects whether sequences are nucleotides or amino acids.
+    /// Detects sequence type by sampling characters across sequences.
     /// 
-    /// Uses a heuristic: if >80% of non-gap characters are A, C, G, T, U, N,
-    /// it's likely nucleotide; otherwise amino acid.
+    /// Samples up to 2500 characters total, taking at most 500 characters per sequence.
+    /// This ensures we sample across at least 5 sequences (if available) rather than
+    /// just the first sequence, providing a more reliable estimate.
+    /// 
+    /// Returns a SequenceType with the computed NT ratio.
     fn detect_sequence_type(sequences: &[Sequence]) -> SequenceType {
         if sequences.is_empty() {
-            return SequenceType::Nucleotide;
+            return SequenceType::NUCLEOTIDE;
         }
 
-        let mut nucleotide_chars = 0;
-        let mut total_chars = 0;
+        let mut nucleotide_chars = 0usize;
+        let mut total_chars = 0usize;
+        const MAX_CHARS_PER_SEQ: usize = 500;
+        const MAX_TOTAL_CHARS: usize = 2500;
 
-        // Sample up to first 1000 characters across sequences
-        'outer: for seq in sequences {
+        for seq in sequences {
+            let mut seq_chars = 0usize;
             for &b in seq.as_bytes() {
                 let upper = b.to_ascii_uppercase();
-                // Skip gaps and unknown
-                if upper == b'-' || upper == b'.' || upper == b' ' {
+                // Skip gaps, missing data, and spaces
+                if matches!(upper, b'-' | b'.' | b' ' | b'?' | b'N') {
                     continue;
                 }
                 total_chars += 1;
-                // Nucleotide characters (including U for RNA and N for unknown)
-                if matches!(upper, b'A' | b'C' | b'G' | b'T' | b'U' | b'N') {
+                seq_chars += 1;
+                // Nucleotide characters (ACGTU)
+                if matches!(upper, b'A' | b'C' | b'G' | b'T' | b'U') {
                     nucleotide_chars += 1;
                 }
-                // Sample enough characters
-                if total_chars >= 1000 {
-                    break 'outer;
+                // Stop sampling this sequence after MAX_CHARS_PER_SEQ
+                if seq_chars >= MAX_CHARS_PER_SEQ {
+                    break;
                 }
+            }
+            // Stop sampling after MAX_TOTAL_CHARS total
+            if total_chars >= MAX_TOTAL_CHARS {
+                break;
             }
         }
 
         if total_chars == 0 {
-            return SequenceType::Nucleotide;
+            return SequenceType::NUCLEOTIDE;
         }
 
-        // If >80% are nucleotide characters, treat as nucleotide
-        if (nucleotide_chars as f64 / total_chars as f64) > 0.8 {
-            SequenceType::Nucleotide
-        } else {
-            SequenceType::AminoAcid
-        }
+        SequenceType::new(nucleotide_chars as f64 / total_chars as f64)
     }
 
     /// Validates that all sequences have the same length.
@@ -867,7 +911,7 @@ impl AppState {
     /// Called when user triggers translation command.
     /// Returns false if we already have a cached translation with matching settings.
     pub fn should_start_translation(&self) -> bool {
-        self.alignment.sequence_type == SequenceType::Nucleotide
+        self.alignment.sequence_type.is_nucleotide()
             && !self.loading_state.is_loading()
             && !self.has_valid_cached_translation()
     }
@@ -1211,7 +1255,7 @@ impl AppState {
                     return false;
                 }
                 "asAA" | "asaa" => {
-                    if self.alignment.sequence_type != SequenceType::Nucleotide {
+                    if !self.alignment.sequence_type.is_nucleotide() {
                         self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
                     } else if self.has_valid_cached_translation() {
                         // We have a valid cached translation - switch to it directly
@@ -1279,7 +1323,7 @@ impl AppState {
     /// Enters translation settings mode.
     pub fn enter_translation_settings(&mut self) {
         // Only allow translation if the original sequence is nucleotide
-        if self.alignment.sequence_type != SequenceType::Nucleotide {
+        if !self.alignment.sequence_type.is_nucleotide() {
             self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
             return;
         }
@@ -1348,7 +1392,7 @@ impl AppState {
         
         let mut translated = Alignment::new(translated_seqs);
         // Force sequence type to AminoAcid
-        translated.sequence_type = SequenceType::AminoAcid;
+        translated.sequence_type = SequenceType::AMINO_ACID;
         self.translated_alignment = Some(translated);
         
         // Convert NT cursor position to AA position
@@ -1850,7 +1894,8 @@ mod tests {
             Sequence::new("seq2", "TGCA-TGC"),
         ];
         let alignment = Alignment::new(seqs);
-        assert_eq!(alignment.sequence_type, SequenceType::Nucleotide);
+        assert!(alignment.sequence_type.is_nucleotide());
+        assert!(alignment.sequence_type.nt_ratio > 0.8);
     }
 
     #[test]
@@ -1860,7 +1905,8 @@ mod tests {
             Sequence::new("seq2", "MKWVTFISLLFLFSSAYSRGVFRRDAHKSE"),
         ];
         let alignment = Alignment::new(seqs);
-        assert_eq!(alignment.sequence_type, SequenceType::AminoAcid);
+        assert!(alignment.sequence_type.is_amino_acid());
+        assert!(alignment.sequence_type.is_likely_not_nucleotide());
     }
 
     #[test]
@@ -1871,7 +1917,7 @@ mod tests {
             Sequence::new("seq2", "MKW---VTFISLLFLFSSAY"),
         ];
         let alignment = Alignment::new(seqs);
-        assert_eq!(alignment.sequence_type, SequenceType::AminoAcid);
+        assert!(alignment.sequence_type.is_amino_acid());
     }
 
     #[test]

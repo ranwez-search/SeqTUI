@@ -200,7 +200,7 @@ impl App {
             }
             
             let mut alignment = Alignment::new(translated_seqs);
-            alignment.sequence_type = SequenceType::AminoAcid;
+            alignment.sequence_type = SequenceType::AMINO_ACID;
             let _ = tx.send(TranslateMessage::Complete(alignment));
         });
     }

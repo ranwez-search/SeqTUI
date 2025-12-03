@@ -47,18 +47,24 @@ fn run_cli_mode(
     reading_frame: u8,
     force: bool,
 ) -> Result<()> {
-    // Validate nucleotide content if translating
-    if translate {
-        validate_nucleotide_files(&[file_path.clone()], forced_format, force, "Translation")?;
-    }
-    
     // Parse the input file
     let alignment = parse_file_with_options(file_path, forced_format)?;
 
     // Translate if requested
     let output_alignment = if translate {
-        if alignment.sequence_type != SequenceType::Nucleotide {
-            anyhow::bail!("Cannot translate: input is not a nucleotide sequence");
+        // Check if file is likely not nucleotide
+        if alignment.sequence_type.is_likely_not_nucleotide() && !force {
+            anyhow::bail!(
+                "Cannot translate: file appears to be amino acids (only {:.0}% nucleotide characters).\n\
+                Use --force to proceed anyway.",
+                alignment.sequence_type.nt_ratio * 100.0
+            );
+        }
+        if !alignment.sequence_type.is_nucleotide() {
+            eprintln!(
+                "Warning: file has only {:.0}% nucleotide characters, translation may produce unexpected results.",
+                alignment.sequence_type.nt_ratio * 100.0
+            );
         }
 
         let codes = GeneticCodes::new();
@@ -85,7 +91,7 @@ fn run_cli_mode(
             .collect();
 
         let mut translated = Alignment::new(translated_seqs);
-        translated.sequence_type = SequenceType::AminoAcid;
+        translated.sequence_type = SequenceType::AMINO_ACID;
         translated
     } else {
         alignment
@@ -137,86 +143,6 @@ fn get_chrom_name(file_path: &PathBuf) -> String {
         .to_string()
 }
 
-/// Computes nucleotide statistics for an alignment.
-/// Returns (nt_count, total_count, nt_ratio) where nt_count is the number of
-/// ACGT characters and total_count excludes gaps and missing data (N, ?).
-fn compute_nt_stats(alignment: &Alignment) -> (usize, usize, f64) {
-    let mut nt_count = 0usize;
-    let mut total_count = 0usize;
-    
-    for seq in &alignment.sequences {
-        for &b in seq.as_bytes() {
-            match b.to_ascii_uppercase() {
-                b'A' | b'C' | b'G' | b'T' => {
-                    nt_count += 1;
-                    total_count += 1;
-                }
-                b'-' | b'N' | b'?' => {} // Skip gaps and missing
-                _ => total_count += 1,   // Non-NT character
-            }
-        }
-    }
-    
-    let ratio = if total_count > 0 {
-        nt_count as f64 / total_count as f64
-    } else {
-        1.0 // Empty sequences are considered NT
-    };
-    
-    (nt_count, total_count, ratio)
-}
-
-/// Validates that files appear to contain nucleotide sequences.
-/// Returns Ok(()) if all files pass, or an error with details if not.
-/// Files with <50% ACGT characters (excluding gaps/N/?) are flagged.
-fn validate_nucleotide_files(
-    files: &[PathBuf],
-    forced_format: Option<FileFormat>,
-    force: bool,
-    mode_name: &str,
-) -> Result<()> {
-    let mut suspect_files: Vec<(String, usize, usize, f64)> = Vec::new();
-    
-    for file_path in files {
-        let alignment = parse_file_with_options(file_path, forced_format)?;
-        let (nt_count, total_count, ratio) = compute_nt_stats(&alignment);
-        
-        if ratio < 0.5 {
-            suspect_files.push((
-                file_path.display().to_string(),
-                nt_count,
-                total_count,
-                ratio,
-            ));
-        }
-    }
-    
-    if !suspect_files.is_empty() && !force {
-        // Write log file with details
-        let log_path = "seqtui_nt_check.log";
-        let mut log_file = std::fs::File::create(log_path)?;
-        writeln!(log_file, "# Nucleotide content check for {} mode", mode_name)?;
-        writeln!(log_file, "# Files with <50% ACGT characters (likely amino acid sequences)")?;
-        writeln!(log_file, "#")?;
-        writeln!(log_file, "# File\tACGT_count\tTotal_chars\tACGT_ratio")?;
-        for (path, nt, total, ratio) in &suspect_files {
-            writeln!(log_file, "{}\t{}\t{}\t{:.1}%", path, nt, total, ratio * 100.0)?;
-        }
-        
-        anyhow::bail!(
-            "{} mode requires nucleotide sequences, but {} file(s) appear to be amino acids:\n\
-            - Less than 50% of characters are ACGT (excluding gaps/N/?)\n\
-            - Details written to: {}\n\
-            - Use --force to proceed anyway",
-            mode_name,
-            suspect_files.len(),
-            log_path
-        );
-    }
-    
-    Ok(())
-}
-
 /// Runs VCF mode: extract biallelic SNPs with minimum flanking distance
 fn run_vcf_mode(
     files: &[PathBuf],
@@ -228,10 +154,10 @@ fn run_vcf_mode(
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
     
-    // Pass 1: Collect all sequence IDs (sorted alphabetically) and validate nucleotide content
+    // Pass 1: Collect all sequence IDs (sorted alphabetically) and check for suspect files
     let mut all_keys: Vec<String> = Vec::new();
     let mut seen_keys: HashSet<String> = HashSet::new();
-    let mut suspect_files: Vec<(String, usize, usize, f64)> = Vec::new();
+    let mut suspect_files: Vec<(String, f64)> = Vec::new();
     
     // Progress tracking for large file sets (>100 files)
     let show_progress = files.len() > 100;
@@ -260,22 +186,12 @@ fn run_vcf_mode(
             );
         }
         
-        // Validate: must be nucleotide
-        if alignment.sequence_type != SequenceType::Nucleotide {
-            anyhow::bail!(
-                "File {} is not a nucleotide alignment. VCF mode requires nucleotide sequences.",
-                file_path.display()
-            );
-        }
-        
-        // Check nucleotide content (integrated validation)
-        let (nt_count, total_count, ratio) = compute_nt_stats(&alignment);
-        if ratio < 0.5 {
+        // Check nucleotide content using the sampled ratio from parsing
+        // Files with <50% ACGT are flagged as suspect (likely amino acids)
+        if alignment.sequence_type.is_likely_not_nucleotide() {
             suspect_files.push((
                 file_path.display().to_string(),
-                nt_count,
-                total_count,
-                ratio,
+                alignment.sequence_type.nt_ratio,
             ));
         }
         
@@ -296,9 +212,9 @@ fn run_vcf_mode(
         writeln!(log_file, "# Nucleotide content check for VCF mode")?;
         writeln!(log_file, "# Files with <50% ACGT characters (likely amino acid sequences)")?;
         writeln!(log_file, "#")?;
-        writeln!(log_file, "# File\tACGT_count\tTotal_chars\tACGT_ratio")?;
-        for (path, nt, total, ratio) in &suspect_files {
-            writeln!(log_file, "{}\t{}\t{}\t{:.1}%", path, nt, total, ratio * 100.0)?;
+        writeln!(log_file, "# File\tACGT_ratio")?;
+        for (path, ratio) in &suspect_files {
+            writeln!(log_file, "{}\t{:.1}%", path, ratio * 100.0)?;
         }
         
         anyhow::bail!(
@@ -523,11 +439,6 @@ fn run_concatenation_mode(
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
     
-    // Validate nucleotide content if translating
-    if translate {
-        validate_nucleotide_files(files, forced_format, force, "Translation")?;
-    }
-    
     let codes = GeneticCodes::new();
     let code = codes.get(genetic_code).ok_or_else(|| {
         anyhow::anyhow!("Unknown genetic code: {}", genetic_code)
@@ -560,10 +471,12 @@ fn run_concatenation_mode(
         
         // Get alignment length (after translation if needed)
         let aln_len = if translate {
-            if alignment.sequence_type != SequenceType::Nucleotide {
+            if alignment.sequence_type.is_likely_not_nucleotide() && !force {
                 anyhow::bail!(
-                    "Cannot translate {}: not a nucleotide sequence",
-                    file_path.display()
+                    "Cannot translate {}: appears to be amino acids ({:.0}% NT).\n\
+                    Use --force to proceed anyway.",
+                    file_path.display(),
+                    alignment.sequence_type.nt_ratio * 100.0
                 );
             }
             // Translated length

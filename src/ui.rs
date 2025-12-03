@@ -97,9 +97,10 @@ impl ColorScheme for AminoAcidColorScheme {
 
 /// Returns the appropriate color for a character based on sequence type.
 fn get_color_for_sequence_type(c: char, seq_type: crate::model::SequenceType) -> Color {
-    match seq_type {
-        crate::model::SequenceType::Nucleotide => DnaColorScheme.get_color(c),
-        crate::model::SequenceType::AminoAcid => AminoAcidColorScheme.get_color(c),
+    if seq_type.is_nucleotide() {
+        DnaColorScheme.get_color(c)
+    } else {
+        AminoAcidColorScheme.get_color(c)
     }
 }
 
