@@ -10,6 +10,7 @@ Written in Rust using [ratatui](https://ratatui.rs/).
 - 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
 - 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handles ambiguity codes (R, Y, N)
 - 🧩 **Concatenation & Supermatrix**: Merge multiple alignments, fill missing with gaps
+- 🧬 **VCF Export**: Extract biallelic SNPs with flanking distance filter
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling
 - ⌨️ **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
 - 🔧 **Command-Line Mode**: Batch convert, translate, concatenate — pipe-friendly output
@@ -102,6 +103,28 @@ seqtui gene1.fasta gene2.fasta -d "_" -s -o supermatrix.fasta
 # Output sequences: Human, Mouse, ... (matched across files)
 ```
 
+### VCF Export (Biallelic SNPs)
+
+Extract biallelic SNPs from alignments with a minimum flanking monomorphic distance filter:
+
+```bash
+# Extract SNPs with at least 300 monomorphic sites on each side
+seqtui alignment.fasta -v 300 -o snps.vcf
+
+# Process multiple alignments (each becomes a separate CHROM)
+seqtui gene*.fasta -v 100 -o all_snps.vcf
+
+# With sequence ID matching via delimiter
+seqtui gene*.fasta -v 100 -d "_" -o snps.vcf
+```
+
+**VCF output features:**
+- Reference = first sequence of first file
+- Samples sorted alphabetically (reference first)
+- Haploid genotypes: `0` (ref), `1` (alt), `.` (missing)
+- `DL` and `DR` in INFO: distance to nearest polymorphic site (for filtering)
+- Sites with gaps are excluded; N/? become missing genotypes
+
 ### CLI Options
 
 | Option | Long | Description |
@@ -114,7 +137,8 @@ seqtui gene1.fasta gene2.fasta -d "_" -s -o supermatrix.fasta
 | `-d` | `--delimiter` | Delimiter for ID matching (uses first field) |
 | `-s` | `--supermatrix` | Fill missing sequences (default: `-`, or `-s '?'`, `-s '.'`) |
 | `-p` | `--partitions` | Write partition file (gene boundaries) |
-| | `--force` | Bypass ID matching check (when >30% orphan IDs) |
+| `-v` | `--vcf` | Extract biallelic SNPs to VCF (value = min flanking distance) |
+| | `--force` | Bypass safety checks (orphan IDs, non-nucleotide files) |
 
 ---
 
@@ -231,7 +255,7 @@ src/
 ## Development
 
 ```bash
-# Run tests (74+ tests covering all formats)
+# Run tests (82 tests covering all formats and VCF export)
 cargo test
 
 # Run with test data

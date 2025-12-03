@@ -22,6 +22,7 @@ toolkit for sequences (aligned or not). Key goals:
 5. Minimal dependencies, easy deployment on HPC clusters
 6. CLI mode for batch processing (convert, translate, concatenate)
 7. Supermatrix building for phylogenetics (multi-gene concatenation)
+8. VCF export for biallelic SNPs with flanking distance filter
 
 ================================================================================
 ARCHITECTURE
@@ -349,7 +350,7 @@ Edge cases:
 TESTING
 ================================================================================
 
-75+ unit tests covering:
+82 unit tests covering:
 - Event handling and key mappings
 - FASTA parsing edge cases
 - PHYLIP parsing (sequential, interleaved, relaxed names)
@@ -359,6 +360,7 @@ TESTING
 - Genetic code translation
 - Model state transitions
 - Color assignments
+- VCF export (biallelic SNPs, flanking distance, missing genotypes)
 
 Run: cargo test
 
@@ -416,7 +418,8 @@ CLI OPTIONS:
   -d, --delimiter     ID matching delimiter (uses first field)
   -s, --supermatrix   Fill missing sequences (default '-', or custom char)
   -p, --partitions    Write partition file
-  --force             Bypass orphan ID check (no short option)
+  -v, --vcf           Extract biallelic SNPs to VCF (value = min flanking dist)
+  --force             Bypass safety checks (orphan IDs, non-NT files)
 
 SINGLE FILE CLI:
   run_cli_mode() - parse, optionally translate, write FASTA
@@ -451,6 +454,56 @@ ORPHAN ID DETECTION:
   - If orphan_count / total_output_ids > 0.30, likely delimiter problem
   - Error message suggests -d and writes IDs to seqtui_ids.log
   - --force bypasses this check
+
+NUCLEOTIDE VALIDATION:
+  - Translation and VCF modes require nucleotide sequences
+  - Files with <50% ACGT characters (excluding gaps/N/?) are flagged
+  - Error suggests the file may be amino acids
+  - Details written to seqtui_nt_check.log
+  - --force bypasses this check
+
+================================================================================
+VCF MODE (main.rs)
+================================================================================
+
+Extract biallelic SNPs from alignments with flanking distance filter:
+  seqtui alignment.fasta -v 300 -o snps.vcf
+
+VCF MODE ALGORITHM:
+  Pass 1: Collect all sequence IDs across files
+          - Reference = first sequence of first file
+          - Samples sorted alphabetically (reference first)
+          - Validate alignment and nucleotide content
+  
+  Pass 2: For each file:
+          - Single pass through sequences with bit flags:
+            real_nt_only[pos]: true if site has only ACGT/N/?
+            seen_nt[pos]: bit flags (A=1, C=2, G=4, T=8)
+          - Derive polymorphic sites: !real_nt_only || popcount(seen_nt) > 1
+          - Compute distLeft[i], distRight[i] using reset vector
+          - Select biallelic sites: real_nt_only && popcount==2 && dist>=min
+  
+  Output: VCF with DL/DR in INFO field for filtering
+
+VCF OUTPUT FORMAT:
+  - Reference sequence from first file (sample column included)
+  - Haploid genotypes: 0 (ref), 1 (alt), . (missing)
+  - Missing genotype: sequence absent from file OR has N/? at position
+  - Site excluded: any present sequence has gap (-) at that position
+  - INFO: DL=distance_left;DR=distance_right
+  - Each input file becomes a separate CHROM (basename without extension)
+
+BIT FLAG OPTIMIZATION:
+  - Alleles tracked with bit flags: A=1, C=2, G=4, T=8
+  - Biallelic check: popcount(seen_nt[pos]) == 2
+  - Single pass per file (no HashSet allocations)
+  - O(n) distance computation using reset vector
+
+VALIDATION:
+  - -v requires -o (output file)
+  - -v incompatible with -t, -s, -p
+  - Files must be valid alignments (same length)
+  - Files must be nucleotide (checked via NT validation)
 
 VALIDATION:
   - -s and -p require multiple input files
