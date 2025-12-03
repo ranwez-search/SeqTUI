@@ -128,6 +128,18 @@ pub enum Action {
     WordBackward,
     /// Move to end of current/next word (e)
     WordEnd,
+    /// Dismiss error popup
+    DismissErrorPopup,
+    /// File browser: move selection up
+    FileBrowserUp,
+    /// File browser: move selection down
+    FileBrowserDown,
+    /// File browser: select/enter directory
+    FileBrowserSelect,
+    /// File browser: go to parent directory
+    FileBrowserParent,
+    /// File browser: quit application
+    FileBrowserQuit,
 }
 
 /// Polls for keyboard events with a timeout.
@@ -142,16 +154,42 @@ pub fn poll_event(timeout: Duration) -> Option<Event> {
 }
 
 /// Converts a crossterm event to an Action based on current app mode.
-pub fn handle_event(event: Event, mode: &AppMode, show_help: bool, pending_g: bool, pending_z: bool, has_number_prefix: bool) -> Action {
+pub fn handle_event(
+    event: Event, 
+    mode: &AppMode, 
+    show_help: bool, 
+    pending_g: bool, 
+    pending_z: bool, 
+    has_number_prefix: bool,
+    has_error_popup: bool,
+    has_file_browser: bool,
+) -> Action {
     match event {
-        Event::Key(key_event) => handle_key_event(key_event, mode, show_help, pending_g, pending_z, has_number_prefix),
+        Event::Key(key_event) => handle_key_event(key_event, mode, show_help, pending_g, pending_z, has_number_prefix, has_error_popup, has_file_browser),
         Event::Resize(width, height) => Action::Resize(width, height),
         _ => Action::None,
     }
 }
 
 /// Handles a key event based on the current application mode.
-fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool, pending_g: bool, pending_z: bool, has_number_prefix: bool) -> Action {
+fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool, pending_g: bool, pending_z: bool, has_number_prefix: bool, has_error_popup: bool, has_file_browser: bool) -> Action {
+    // Error popup takes priority - any key dismisses it
+    if has_error_popup {
+        return Action::DismissErrorPopup;
+    }
+    
+    // File browser takes priority over normal mode
+    if has_file_browser {
+        return match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Action::FileBrowserUp,
+            KeyCode::Down | KeyCode::Char('j') => Action::FileBrowserDown,
+            KeyCode::Enter | KeyCode::Char('l') => Action::FileBrowserSelect,
+            KeyCode::Backspace | KeyCode::Char('h') => Action::FileBrowserParent,
+            KeyCode::Esc | KeyCode::Char('q') => Action::FileBrowserQuit,
+            _ => Action::None,
+        };
+    }
+    
     // If help is shown, handle tab navigation or dismiss
     if show_help {
         return match key.code {
@@ -338,12 +376,14 @@ fn handle_translation_settings_mode(key: KeyEvent) -> Action {
 }
 
 /// Result of applying an action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionResult {
     /// Continue normally
     Continue,
     /// Start background translation
     StartTranslation,
+    /// Load a file from the file browser
+    LoadFile(std::path::PathBuf),
 }
 
 /// Applies an action to the application state.
@@ -503,6 +543,26 @@ pub fn apply_action(state: &mut AppState, action: Action) -> ActionResult {
         Action::WordEnd => {
             state.word_end();
         }
+        Action::DismissErrorPopup => {
+            state.dismiss_error_popup();
+        }
+        Action::FileBrowserUp => {
+            state.file_browser_up();
+        }
+        Action::FileBrowserDown => {
+            state.file_browser_down();
+        }
+        Action::FileBrowserSelect => {
+            if let Some(path) = state.file_browser_select() {
+                return ActionResult::LoadFile(path);
+            }
+        }
+        Action::FileBrowserParent => {
+            state.file_browser_parent();
+        }
+        Action::FileBrowserQuit => {
+            state.file_browser_quit();
+        }
     }
 
     ActionResult::Continue
@@ -518,23 +578,23 @@ mod tests {
 
         // Test movement keys (Vim-style: h=left, j=down, k=up, l=right)
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::MoveLeft);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::MoveLeft);
 
         let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::MoveDown);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::MoveDown);
 
         let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::MoveUp);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::MoveUp);
 
         let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::MoveRight);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::MoveRight);
     }
 
     #[test]
     fn test_enter_command_mode() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::EnterCommandMode);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::EnterCommandMode);
     }
 
     #[test]
@@ -542,20 +602,20 @@ mod tests {
         let mode = AppMode::Command(String::new());
 
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::CommandChar('q'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::CommandChar('q'));
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::ExecuteCommand);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::ExecuteCommand);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::CancelCommand);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::CancelCommand);
     }
 
     #[test]
     fn test_ctrl_c_quit() {
         let mode = AppMode::Normal;
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::Quit);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::Quit);
     }
 
     #[test]
@@ -564,17 +624,17 @@ mod tests {
 
         // Test entering search modes
         let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::EnterSearchMode);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::EnterSearchMode);
 
         let key = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::EnterSearchBackward);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::EnterSearchBackward);
 
         // Test find next/previous
         let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::FindNext);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::FindNext);
 
         let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::FindPrevious);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::FindPrevious);
     }
 
     #[test]
@@ -582,16 +642,16 @@ mod tests {
         let mode = AppMode::Search(String::new());
 
         let key = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::SearchChar('A'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::SearchChar('A'));
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::ExecuteSearch);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::ExecuteSearch);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::CancelSearch);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::CancelSearch);
 
         let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::SearchBackspace);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::SearchBackspace);
     }
 
     #[test]
@@ -600,26 +660,26 @@ mod tests {
         
         // Left/Right and h/l switch tabs
         let key = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::HelpNextTab);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::HelpNextTab);
 
         let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::HelpPrevTab);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::HelpPrevTab);
 
         let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::HelpNextTab);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::HelpNextTab);
 
         let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::HelpPrevTab);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::HelpPrevTab);
 
         let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::HelpNextTab);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::HelpNextTab);
 
         // Other keys dismiss help
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::DismissHelp);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::DismissHelp);
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, true, false, false, false), Action::DismissHelp);
+        assert_eq!(handle_key_event(key, &mode, true, false, false, false, false, false), Action::DismissHelp);
     }
 
     #[test]
@@ -628,21 +688,21 @@ mod tests {
 
         // Test 0 key (without number prefix -> go to first column)
         let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::GotoFirstColumn);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::GotoFirstColumn);
 
         // Test 0 key WITH number prefix (e.g., typing 500|) -> accumulate digit
         let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, true), Action::AccumulateDigit('0'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false, true, false, false), Action::AccumulateDigit('0'));
 
         let key = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::GotoLastColumn);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::GotoLastColumn);
 
         // Test Home and End keys
         let key = KeyEvent::new(KeyCode::Home, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::GotoFirstColumn);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::GotoFirstColumn);
 
         let key = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::GotoLastColumn);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::GotoLastColumn);
     }
 
     #[test]
@@ -651,21 +711,21 @@ mod tests {
 
         // Test g prefix
         let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::PendingG);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::PendingG);
 
         // Test g0, gm, g$ (with pending_g = true)
         let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, true, false, false), Action::GotoFirstVisibleColumn);
+        assert_eq!(handle_key_event(key, &mode, false, true, false, false, false, false), Action::GotoFirstVisibleColumn);
 
         let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, true, false, false), Action::GotoMiddleVisibleColumn);
+        assert_eq!(handle_key_event(key, &mode, false, true, false, false, false, false), Action::GotoMiddleVisibleColumn);
 
         let key = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, true, false, false), Action::GotoLastVisibleColumn);
+        assert_eq!(handle_key_event(key, &mode, false, true, false, false, false, false), Action::GotoLastVisibleColumn);
 
         // Unknown g-command returns None
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, true, false, false), Action::None);
+        assert_eq!(handle_key_event(key, &mode, false, true, false, false, false, false), Action::None);
     }
 
     #[test]
@@ -674,18 +734,18 @@ mod tests {
 
         // Test z prefix
         let key = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::PendingZ);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::PendingZ);
 
         // Test zH, zL (with pending_z = true)
         let key = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, true, false), Action::HalfPageLeft);
+        assert_eq!(handle_key_event(key, &mode, false, false, true, false, false, false), Action::HalfPageLeft);
 
         let key = KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, true, false), Action::HalfPageRight);
+        assert_eq!(handle_key_event(key, &mode, false, false, true, false, false, false), Action::HalfPageRight);
 
         // Unknown z-command returns None
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, true, false), Action::None);
+        assert_eq!(handle_key_event(key, &mode, false, false, true, false, false, false), Action::None);
     }
 
     #[test]
@@ -694,11 +754,11 @@ mod tests {
 
         // Test digit accumulation
         let key = KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::AccumulateDigit('5'));
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::AccumulateDigit('5'));
 
         // Test | to execute goto column
         let key = KeyEvent::new(KeyCode::Char('|'), KeyModifiers::NONE);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::ExecuteGotoColumn);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::ExecuteGotoColumn);
     }
 
     #[test]
@@ -707,26 +767,26 @@ mod tests {
 
         // Test Ctrl+Left for half page left
         let key = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::HalfPageLeft);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::HalfPageLeft);
 
         // Test Ctrl+Right for half page right
         let key = KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::HalfPageRight);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::HalfPageRight);
 
         // Test Shift+Left for half page left (macOS compatibility)
         let key = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::HalfPageLeft);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::HalfPageLeft);
 
         // Test Shift+Right for half page right (macOS compatibility)
         let key = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::HalfPageRight);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::HalfPageRight);
 
         // Test Shift+Up for page up
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::PageUp);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::PageUp);
 
         // Test Shift+Down for page down
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT);
-        assert_eq!(handle_key_event(key, &mode, false, false, false, false), Action::PageDown);
+        assert_eq!(handle_key_event(key, &mode, false, false, false, false, false, false), Action::PageDown);
     }
 }

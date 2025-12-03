@@ -123,6 +123,7 @@ seqtui gene*.fasta -v 100 -d "_" -o snps.vcf
 - Samples sorted alphabetically (reference first)
 - Haploid genotypes: `0` (ref), `1` (alt), `.` (missing)
 - `DL` and `DR` in INFO: distance to nearest polymorphic site (for filtering)
+- Only isolated biallelic SNPs are exported (polymorphic sites reduce DL/DR)
 - Sites with gaps are excluded; N/? become missing genotypes
 
 ### CLI Options
@@ -149,6 +150,9 @@ By default, SeqTUI opens a full-screen terminal interface for exploring alignmen
 ### Opening Files
 
 ```bash
+# Launch file browser (no arguments)
+seqtui
+
 # View an alignment (format auto-detected from extension)
 seqtui sequences.fasta
 seqtui alignment.phy
@@ -200,6 +204,7 @@ seqtui sequences.fasta -g 2 -r 1    # Open with genetic code 2 preset
 | `:q` | Quit |
 | `:h` | Toggle help overlay |
 | `:<number>` | Go to sequence/row |
+| `:e` | Open file browser |
 | `:w file.fa` | Save current view to FASTA |
 | `:asAA` | Translate nucleotides to amino acids |
 | `:asNT` | Switch back to nucleotide view |

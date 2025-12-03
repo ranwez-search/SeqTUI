@@ -84,6 +84,151 @@ impl LoadingState {
     }
 }
 
+/// A file entry in the file browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileEntry {
+    /// File or directory name
+    pub name: String,
+    /// Full path
+    pub path: PathBuf,
+    /// Whether this is a directory
+    pub is_dir: bool,
+}
+
+/// State for the file browser popup.
+#[derive(Debug, Clone)]
+pub struct FileBrowserState {
+    /// Current directory being browsed
+    pub current_dir: PathBuf,
+    /// List of entries in the current directory
+    pub entries: Vec<FileEntry>,
+    /// Currently selected index (0-based)
+    pub selected: usize,
+    /// Scroll offset for long lists
+    pub scroll_offset: usize,
+    /// Error message that triggered the browser (shown in title)
+    pub error_message: String,
+}
+
+impl FileBrowserState {
+    /// Creates a new file browser starting at the given directory.
+    pub fn new(start_dir: PathBuf, error_message: String) -> Self {
+        let mut browser = Self {
+            current_dir: start_dir,
+            entries: Vec::new(),
+            selected: 0,
+            scroll_offset: 0,
+            error_message,
+        };
+        browser.refresh_entries();
+        browser
+    }
+
+    /// Refreshes the list of entries from the current directory.
+    pub fn refresh_entries(&mut self) {
+        self.entries.clear();
+        self.selected = 0;
+        self.scroll_offset = 0;
+
+        // Add parent directory entry if not at root
+        if let Some(parent) = self.current_dir.parent() {
+            self.entries.push(FileEntry {
+                name: "..".to_string(),
+                path: parent.to_path_buf(),
+                is_dir: true,
+            });
+        }
+
+        // Read directory contents
+        if let Ok(read_dir) = std::fs::read_dir(&self.current_dir) {
+            let mut dirs: Vec<FileEntry> = Vec::new();
+            let mut files: Vec<FileEntry> = Vec::new();
+
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                
+                // Skip hidden files (starting with .)
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                let is_dir = path.is_dir();
+                let entry = FileEntry { name, path, is_dir };
+
+                if is_dir {
+                    dirs.push(entry);
+                } else {
+                    // Only show sequence files
+                    let ext = entry.path.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase());
+                    
+                    if matches!(ext.as_deref(), 
+                        Some("fasta" | "fa" | "fna" | "faa" | "fas" | 
+                             "phy" | "phylip" | 
+                             "nex" | "nexus" | "nxs")) {
+                        files.push(entry);
+                    }
+                }
+            }
+
+            // Sort directories and files separately, then combine
+            dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+            self.entries.extend(dirs);
+            self.entries.extend(files);
+        }
+    }
+
+    /// Moves selection up.
+    pub fn select_prev(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+            // Adjust scroll if needed
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
+        }
+    }
+
+    /// Moves selection down.
+    pub fn select_next(&mut self) {
+        if self.selected + 1 < self.entries.len() {
+            self.selected += 1;
+        }
+    }
+
+    /// Adjusts scroll offset for the given visible height.
+    pub fn adjust_scroll(&mut self, visible_height: usize) {
+        if self.selected >= self.scroll_offset + visible_height {
+            self.scroll_offset = self.selected - visible_height + 1;
+        }
+    }
+
+    /// Returns the currently selected entry, if any.
+    pub fn selected_entry(&self) -> Option<&FileEntry> {
+        self.entries.get(self.selected)
+    }
+
+    /// Enters the selected directory.
+    pub fn enter_selected(&mut self) -> Option<PathBuf> {
+        if let Some(entry) = self.selected_entry() {
+            if entry.is_dir {
+                self.current_dir = entry.path.clone();
+                self.refresh_entries();
+                None
+            } else {
+                // Return the selected file path
+                Some(entry.path.clone())
+            }
+        } else {
+            None
+        }
+    }
+}
+
 /// Represents a single sequence with its identifier and data.
 /// 
 /// Sequence data is stored as `Vec<u8>` (ASCII bytes) rather than `String`
@@ -518,6 +663,10 @@ pub struct AppState {
     pub loading_state: LoadingState,
     /// Spinner animation frame (0-3)
     pub spinner_frame: usize,
+    /// Error popup to display (shown as centered popup, dismissable with any key)
+    pub error_popup: Option<String>,
+    /// File browser state (shown when file not found)
+    pub file_browser: Option<FileBrowserState>,
 }
 
 impl AppState {
@@ -546,6 +695,8 @@ impl AppState {
             number_buffer: String::new(),
             loading_state: LoadingState::Ready,
             spinner_frame: 0,
+            error_popup: None,
+            file_browser: None,
         }
     }
 
@@ -577,6 +728,8 @@ impl AppState {
                 sequences_loaded: None,
             },
             spinner_frame: 0,
+            error_popup: None,
+            file_browser: None,
         }
     }
 
@@ -591,9 +744,93 @@ impl AppState {
     }
 
     /// Sets an error state after loading fails.
-    pub fn set_loading_error(&mut self, error: String) {
+    /// If the error is "file not found", opens the file browser.
+    pub fn set_loading_error(&mut self, error: String, file_path: Option<PathBuf>) {
         self.loading_state = LoadingState::Ready;
-        self.status_message = Some(format!("Error: {}", error));
+        
+        // Check if this is a "file not found" error
+        let is_not_found = error.contains("No such file") || error.contains("not found");
+        
+        if is_not_found {
+            // Open file browser starting from the file's directory or current directory
+            let start_dir = file_path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .filter(|p| !p.as_os_str().is_empty()) // Filter out empty parent paths
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            
+            let file_name = file_path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("file");
+            
+            let error_msg = format!("File not found: {}", file_name);
+            self.file_browser = Some(FileBrowserState::new(start_dir, error_msg));
+        } else {
+            // Show error popup for other errors
+            self.error_popup = Some(error);
+        }
+    }
+
+    /// Shows an error popup with the given message.
+    pub fn show_error_popup(&mut self, message: String) {
+        self.error_popup = Some(message);
+    }
+
+    /// Dismisses the error popup.
+    pub fn dismiss_error_popup(&mut self) {
+        self.error_popup = None;
+    }
+
+    /// Closes the file browser.
+    pub fn close_file_browser(&mut self) {
+        self.file_browser = None;
+    }
+
+    /// Moves file browser selection up.
+    pub fn file_browser_up(&mut self) {
+        if let Some(browser) = &mut self.file_browser {
+            browser.select_prev();
+        }
+    }
+
+    /// Moves file browser selection down.
+    pub fn file_browser_down(&mut self) {
+        if let Some(browser) = &mut self.file_browser {
+            browser.select_next();
+        }
+    }
+
+    /// Selects the current file browser entry.
+    /// Returns Some(path) if a file was selected, None if navigating into directory.
+    pub fn file_browser_select(&mut self) -> Option<PathBuf> {
+        if let Some(browser) = &mut self.file_browser {
+            browser.enter_selected()
+        } else {
+            None
+        }
+    }
+
+    /// Goes to parent directory in file browser.
+    pub fn file_browser_parent(&mut self) {
+        if let Some(browser) = &mut self.file_browser {
+            if let Some(parent) = browser.current_dir.parent() {
+                browser.current_dir = parent.to_path_buf();
+                browser.refresh_entries();
+            }
+        }
+    }
+
+    /// Quits the file browser. If an alignment is loaded, just close the browser.
+    /// If no alignment is loaded, quit the application.
+    pub fn file_browser_quit(&mut self) {
+        self.file_browser = None;
+        // Only quit if no alignment is loaded
+        if self.alignment.sequence_count() == 0 {
+            self.should_quit = true;
+        }
     }
 
     /// Sets the translated alignment after async translation completes.
@@ -966,6 +1203,13 @@ impl AppState {
             match cmd.as_str() {
                 "q" | "quit" => self.should_quit = true,
                 "h" | "help" => self.show_help(),
+                "e" | "edit" => {
+                    // Open file browser to select a new file
+                    let start_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    self.file_browser = Some(FileBrowserState::new(start_dir, "Open file".to_string()));
+                    self.mode = AppMode::Normal;
+                    return false;
+                }
                 "asAA" | "asaa" => {
                     if self.alignment.sequence_type != SequenceType::Nucleotide {
                         self.status_message = Some("Cannot translate: not a nucleotide sequence".to_string());
@@ -1018,6 +1262,7 @@ impl AppState {
                             let aln_len = self.active_alignment().alignment_length();
                             self.cursor.col = self.cursor.col.min(aln_len.saturating_sub(1));
                             self.ensure_cursor_visible();
+                            self.status_message = None; // Clear any previous error
                         } else {
                             self.status_message = Some(format!("Invalid sequence number: {}", row));
                         }
@@ -1294,9 +1539,11 @@ impl AppState {
         if col > 0 && col <= aln_len {
             self.cursor.col = col - 1; // 1-indexed for user
             self.ensure_cursor_visible();
+            self.status_message = None; // Clear any previous error
         } else if col == 0 {
             self.cursor.col = 0;
             self.ensure_cursor_visible();
+            self.status_message = None; // Clear any previous error
         } else {
             self.status_message = Some(format!("Invalid column: {}", col));
         }

@@ -161,6 +161,16 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if state.loading_state.is_loading() {
         render_loading_overlay(frame, state, area);
     }
+
+    // Render error popup if active
+    if let Some(error_msg) = &state.error_popup {
+        render_error_popup(frame, error_msg, area);
+    }
+
+    // Render file browser if active
+    if let Some(browser) = &state.file_browser {
+        render_file_browser(frame, browser, area);
+    }
 }
 
 /// Renders the sequence names panel (sticky, always visible).
@@ -422,7 +432,7 @@ fn render_hint_bar(frame: &mut Frame, area: Rect) {
         Span::styled(" help ", Style::default().fg(Color::Gray)),
         Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
         Span::styled(" search ", Style::default().fg(Color::Gray)),
-        Span::styled(" h/j/k/l ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(" ←↑↓→ ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
         Span::styled(" navigate ", Style::default().fg(Color::Gray)),
     ];
 
@@ -475,17 +485,19 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
     match state.help_tab {
         HelpTab::Basics => {
             help_lines.extend(vec![
-                Line::from(Span::styled("GETTING STARTED", Style::default().add_modifier(Modifier::BOLD))),
-                Line::from(""),
-                Line::from("  SeqTUI displays FASTA sequence alignments."),
-                Line::from("  Use arrow keys or Vim keys to navigate."),
-                Line::from(""),
                 Line::from(Span::styled("QUICK COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
                 Line::from("  :q             Quit the application"),
                 Line::from("  :h             Toggle this help"),
+                Line::from("  :e             Open file browser"),
                 Line::from("  :<number>      Jump to sequence/row number"),
                 Line::from("  :w file.fa     Save to FASTA (single-line seqs)"),
+                Line::from(""),
+                Line::from(Span::styled("CLI MODE", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("  Run 'seqtui -h' for CLI options (convert,"),
+                Line::from("  concatenate, translate, VCF export)."),
+                Line::from("  https://github.com/ranwez-search/SeqTUI"),
                 Line::from(""),
                 Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
             ]);
@@ -722,6 +734,140 @@ fn render_loading_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
         .borders(Borders::ALL)
         .title(" Loading ")
         .title_style(Style::default().add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Renders an error popup overlay.
+fn render_error_popup(frame: &mut Frame, error_msg: &str, area: Rect) {
+    // Calculate centered popup dimensions
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = 7;
+    
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    // Wrap error message if needed
+    let max_line_len = (popup_width - 4) as usize;
+    let wrapped_msg = textwrap::wrap(error_msg, max_line_len);
+    
+    let mut lines = vec![Line::from("")];
+    for line in wrapped_msg.iter().take(3) {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", line),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press any key to continue...",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Error ")
+        .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, popup_area);
+}
+
+/// Renders the file browser overlay.
+fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserState, area: Rect) {
+    // Calculate centered popup dimensions
+    let popup_width = 70.min(area.width.saturating_sub(4));
+    let popup_height = 20.min(area.height.saturating_sub(4));
+    
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    // Calculate visible height for entries (excluding borders and title)
+    let visible_height = (popup_height.saturating_sub(4)) as usize;
+
+    // Build entry lines
+    let mut lines: Vec<Line> = Vec::new();
+    
+    // Show current directory path as first line
+    let dir_str = browser.current_dir.display().to_string();
+    let max_path_len = (popup_width - 4) as usize;
+    let display_path = if dir_str.len() > max_path_len {
+        format!("...{}", &dir_str[dir_str.len() - max_path_len + 3..])
+    } else {
+        dir_str
+    };
+    lines.push(Line::from(Span::styled(
+        display_path,
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from("─".repeat((popup_width - 2) as usize)));
+
+    // Determine scroll window
+    let start_idx = browser.scroll_offset;
+    let end_idx = (start_idx + visible_height.saturating_sub(2)).min(browser.entries.len());
+
+    for idx in start_idx..end_idx {
+        let entry = &browser.entries[idx];
+        let is_selected = idx == browser.selected;
+
+        let (prefix, style) = if entry.is_dir {
+            ("📁 ", Style::default().fg(Color::Yellow))
+        } else {
+            ("📄 ", Style::default().fg(Color::White))
+        };
+
+        let name_style = if is_selected {
+            style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+
+        // Truncate name if too long
+        let max_name_len = (popup_width - 6) as usize;
+        let display_name = if entry.name.len() > max_name_len {
+            format!("{}…", &entry.name[..max_name_len - 1])
+        } else {
+            entry.name.clone()
+        };
+
+        let line_content = format!("{}{}", prefix, display_name);
+        
+        // Pad to full width if selected (for highlight)
+        let padded = if is_selected {
+            format!("{:<width$}", line_content, width = (popup_width - 2) as usize)
+        } else {
+            line_content
+        };
+
+        lines.push(Line::from(Span::styled(padded, name_style)));
+    }
+
+    // Show hint at bottom
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑/↓:Navigate  Enter:Select  Backspace:Parent  Esc:Quit",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let title = format!(" Select File - {} ", browser.error_message);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .style(Style::default().bg(Color::Black));
 
     let paragraph = Paragraph::new(lines).block(block);

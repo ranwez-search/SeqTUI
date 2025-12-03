@@ -22,7 +22,8 @@ toolkit for sequences (aligned or not). Key goals:
 5. Minimal dependencies, easy deployment on HPC clusters
 6. CLI mode for batch processing (convert, translate, concatenate)
 7. Supermatrix building for phylogenetics (multi-gene concatenation)
-8. VCF export for biallelic SNPs with flanking distance filter
+8. VCF export for isolated biallelic SNPs with flanking distance filter
+9. File browser for interactive file selection (:e command, or launch without args)
 
 ================================================================================
 ARCHITECTURE
@@ -404,6 +405,10 @@ SeqTUI has two modes:
 1. TUI MODE (default)
    - Interactive viewer with Vim-style navigation
    - Triggered when no -o/--output is specified
+   - Can launch with or without file arguments
+   - Without args: opens file browser to select files
+   - With args: opens specified files directly
+   - :e command opens file browser from within viewer
 
 2. CLI MODE (with -o)
    - Batch processing: convert, translate, concatenate

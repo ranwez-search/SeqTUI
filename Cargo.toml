@@ -3,7 +3,7 @@ name = "seqtui"
 version = "0.1.0"
 edition = "2021"
 authors = ["V. Ranwez"]
-description = "A Vim-style terminal viewer for sequence alignments (FASTA, PHYLIP, NEXUS)"
+description = "A fast terminal-based viewer and toolkit for sequences. View, translate, convert, and concatenate — aligned or not."
 license = "MIT"
 readme = "README.md"
 
@@ -18,6 +18,9 @@ thiserror = "1.0"
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
+
+# Text wrapping
+textwrap = "0.16"
 
 # Memory allocator (better memory return to OS)
 tikv-jemallocator = "0.6"

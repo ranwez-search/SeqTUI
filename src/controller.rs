@@ -35,8 +35,8 @@ use crate::ui::{calculate_visible_dimensions, render};
 pub enum LoadMessage {
     /// Loading completed successfully
     Complete(Alignment),
-    /// Loading failed with an error
-    Error(String),
+    /// Loading failed with an error (includes file path for context)
+    Error { message: String, path: PathBuf },
     /// Progress update (for future use with streaming parsers)
     Progress { sequences_loaded: usize },
 }
@@ -125,13 +125,17 @@ impl App {
         let (tx, rx): (Sender<LoadMessage>, Receiver<LoadMessage>) = mpsc::channel();
 
         // Spawn background thread for loading
+        let path_for_error = file_path.clone();
         thread::spawn(move || {
             match parse_file_with_options(&file_path, forced_format) {
                 Ok(alignment) => {
                     let _ = tx.send(LoadMessage::Complete(alignment));
                 }
                 Err(e) => {
-                    let _ = tx.send(LoadMessage::Error(e.to_string()));
+                    let _ = tx.send(LoadMessage::Error { 
+                        message: e.to_string(), 
+                        path: path_for_error,
+                    });
                 }
             }
         });
@@ -214,8 +218,8 @@ impl App {
                         self.state.set_alignment(alignment);
                         self.load_receiver = None; // Done loading
                     }
-                    Ok(LoadMessage::Error(e)) => {
-                        self.state.set_loading_error(e);
+                    Ok(LoadMessage::Error { message, path }) => {
+                        self.state.set_loading_error(message, Some(path));
                         self.load_receiver = None;
                     }
                     Ok(LoadMessage::Progress { sequences_loaded }) => {
@@ -229,7 +233,7 @@ impl App {
                     }
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // Sender dropped without sending - should not happen
-                        self.state.set_loading_error("Loading thread terminated unexpectedly".to_string());
+                        self.state.set_loading_error("Loading thread terminated unexpectedly".to_string(), None);
                         self.load_receiver = None;
                     }
                 }
@@ -273,7 +277,18 @@ impl App {
             // Handle events
             if let Some(event) = poll_event(self.tick_rate) {
                 let has_number_prefix = !self.state.number_buffer.is_empty();
-                let action = handle_event(event, &self.state.mode, self.state.show_help, self.state.pending_g, self.state.pending_z, has_number_prefix);
+                let has_error_popup = self.state.error_popup.is_some();
+                let has_file_browser = self.state.file_browser.is_some();
+                let action = handle_event(
+                    event, 
+                    &self.state.mode, 
+                    self.state.show_help, 
+                    self.state.pending_g, 
+                    self.state.pending_z, 
+                    has_number_prefix,
+                    has_error_popup,
+                    has_file_browser,
+                );
 
                 // Handle resize specially to update viewport
                 if let crate::event::Action::Resize(_, _) = action {
@@ -283,8 +298,14 @@ impl App {
                 let result = apply_action(&mut self.state, action);
 
                 // Check if translation should be started
-                if result == ActionResult::StartTranslation {
-                    self.start_background_translation();
+                match result {
+                    ActionResult::StartTranslation => {
+                        self.start_background_translation();
+                    }
+                    ActionResult::LoadFile(path) => {
+                        self.start_background_load(path);
+                    }
+                    ActionResult::Continue => {}
                 }
 
                 if self.state.should_quit {
@@ -294,6 +315,49 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Starts a new background load for the given file path.
+    fn start_background_load(&mut self, file_path: PathBuf) {
+        // Close file browser
+        self.state.close_file_browser();
+        
+        // Extract file name for display
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        
+        // Reset state for loading
+        self.state.loading_state = LoadingState::LoadingFile {
+            path: file_path.clone(),
+            message: format!("Loading {}...", file_name),
+            sequences_loaded: None,
+        };
+        self.state.status_message = None;
+        
+        // Create channel for background loading
+        let (tx, rx): (Sender<LoadMessage>, Receiver<LoadMessage>) = mpsc::channel();
+        
+        // Store the path for error handling
+        let path_for_error = file_path.clone();
+        
+        // Spawn background thread for loading
+        thread::spawn(move || {
+            match parse_file_with_options(&file_path, None) {
+                Ok(alignment) => {
+                    let _ = tx.send(LoadMessage::Complete(alignment));
+                }
+                Err(e) => {
+                    let _ = tx.send(LoadMessage::Error { 
+                        message: e.to_string(), 
+                        path: path_for_error,
+                    });
+                }
+            }
+        });
+        
+        self.load_receiver = Some(rx);
     }
 
     /// Updates the viewport size based on terminal dimensions.
@@ -316,6 +380,19 @@ impl Drop for App {
 
 /// Convenience function to run the application with an alignment file.
 pub fn run_app(state: AppState) -> Result<()> {
+    let mut app = App::new(state)?;
+    app.run()
+}
+
+/// Convenience function to run the application with the file browser open.
+/// Used when no file is provided on command line.
+pub fn run_app_with_file_browser() -> Result<()> {
+    use crate::model::{Alignment, FileBrowserState};
+    
+    let start_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut state = AppState::new(Alignment::new(vec![]), "No file".to_string());
+    state.file_browser = Some(FileBrowserState::new(start_dir, "Select a sequence file".to_string()));
+    
     let mut app = App::new(state)?;
     app.run()
 }

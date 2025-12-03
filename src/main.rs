@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 
-use seqtui::controller::run_app_with_loading;
+use seqtui::controller::{run_app_with_loading, run_app_with_file_browser};
 use seqtui::formats::{parse_file_with_options, FileFormat};
 use seqtui::genetic_code::GeneticCodes;
 use seqtui::model::{Alignment, Sequence, SequenceType};
@@ -228,12 +228,10 @@ fn run_vcf_mode(
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
     
-    // Validate that files contain nucleotide sequences
-    validate_nucleotide_files(files, forced_format, force, "VCF")?;
-    
-    // Pass 1: Collect all sequence IDs (sorted alphabetically)
+    // Pass 1: Collect all sequence IDs (sorted alphabetically) and validate nucleotide content
     let mut all_keys: Vec<String> = Vec::new();
     let mut seen_keys: HashSet<String> = HashSet::new();
+    let mut suspect_files: Vec<(String, usize, usize, f64)> = Vec::new();
     
     eprintln!("Pass 1: Scanning {} file(s) for sequence IDs...", files.len());
     
@@ -257,6 +255,17 @@ fn run_vcf_mode(
             );
         }
         
+        // Check nucleotide content (integrated validation)
+        let (nt_count, total_count, ratio) = compute_nt_stats(&alignment);
+        if ratio < 0.5 {
+            suspect_files.push((
+                file_path.display().to_string(),
+                nt_count,
+                total_count,
+                ratio,
+            ));
+        }
+        
         // Collect all keys
         for seq in &alignment.sequences {
             let key = extract_key(&seq.id, delimiter);
@@ -265,6 +274,28 @@ fn run_vcf_mode(
                 all_keys.push(key);
             }
         }
+    }
+    
+    // Report suspect files if any (unless --force)
+    if !suspect_files.is_empty() && !force {
+        let log_path = "seqtui_nt_check.log";
+        let mut log_file = std::fs::File::create(log_path)?;
+        writeln!(log_file, "# Nucleotide content check for VCF mode")?;
+        writeln!(log_file, "# Files with <50% ACGT characters (likely amino acid sequences)")?;
+        writeln!(log_file, "#")?;
+        writeln!(log_file, "# File\tACGT_count\tTotal_chars\tACGT_ratio")?;
+        for (path, nt, total, ratio) in &suspect_files {
+            writeln!(log_file, "{}\t{}\t{}\t{:.1}%", path, nt, total, ratio * 100.0)?;
+        }
+        
+        anyhow::bail!(
+            "VCF mode requires nucleotide sequences, but {} file(s) appear to be amino acids:\n\
+            - Less than 50% of characters are ACGT (excluding gaps/N/?)\n\
+            - Details written to: {}\n\
+            - Use --force to proceed anyway",
+            suspect_files.len(),
+            log_path
+        );
     }
     
     if all_keys.is_empty() {
@@ -396,7 +427,7 @@ fn run_vcf_mode(
             snp_count += 1;
         }
         
-        eprintln!("  {} : {} sites, {} biallelic SNPs selected", chrom, aln_len, snp_count);
+        eprintln!("  {} : {} sites, {} isolated biallelic SNPs selected", chrom, aln_len, snp_count);
     }
     
     // Write VCF output
@@ -701,11 +732,17 @@ impl From<FormatArg> for Option<FileFormat> {
 /// With -o/--output, runs in CLI mode and writes output to file (or stdout with "-").
 /// With multiple input files, concatenates sequences by matching IDs.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author = "V. Ranwez",
+    version,
+    about,
+    long_about = None,
+    after_help = "Repository: https://github.com/ranwez-search/SeqTUI"
+)]
 struct Args {
     /// Sequence file(s) to process (FASTA, PHYLIP, or NEXUS format)
     /// Multiple files will be concatenated by matching sequence IDs
-    #[arg(required = true)]
+    /// If omitted, opens file browser in TUI mode
     files: Vec<PathBuf>,
 
     /// Force a specific file format (overrides auto-detection)
@@ -821,6 +858,14 @@ fn main() -> Result<()> {
         if args.partitions.is_some() {
             anyhow::bail!("-v/--vcf is incompatible with -p/--partitions");
         }
+    }
+
+    // No files provided: open TUI with file browser
+    if args.files.is_empty() {
+        if args.output.is_some() {
+            anyhow::bail!("CLI mode (-o/--output) requires at least one input file");
+        }
+        return run_app_with_file_browser();
     }
 
     // VCF mode: extract biallelic SNPs
