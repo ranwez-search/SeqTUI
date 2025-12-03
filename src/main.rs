@@ -231,14 +231,13 @@ fn run_vcf_mode(
     // Validate that files contain nucleotide sequences
     validate_nucleotide_files(files, forced_format, force, "VCF")?;
     
-    // Pass 1: Collect all sequence IDs and identify reference
+    // Pass 1: Collect all sequence IDs (sorted alphabetically)
     let mut all_keys: Vec<String> = Vec::new();
     let mut seen_keys: HashSet<String> = HashSet::new();
-    let mut reference_key: Option<String> = None;
     
     eprintln!("Pass 1: Scanning {} file(s) for sequence IDs...", files.len());
     
-    for (file_idx, file_path) in files.iter().enumerate() {
+    for file_path in files {
         let alignment = parse_file_with_options(file_path, forced_format)?;
         
         // Validate: must be a valid alignment
@@ -258,17 +257,7 @@ fn run_vcf_mode(
             );
         }
         
-        // First sequence of first file is the reference
-        if file_idx == 0 {
-            if let Some(first_seq) = alignment.sequences.first() {
-                let key = extract_key(&first_seq.id, delimiter);
-                reference_key = Some(key.clone());
-                seen_keys.insert(key.clone());
-                all_keys.push(key);
-            }
-        }
-        
-        // Collect all other keys
+        // Collect all keys
         for seq in &alignment.sequences {
             let key = extract_key(&seq.id, delimiter);
             if !seen_keys.contains(&key) {
@@ -278,23 +267,14 @@ fn run_vcf_mode(
         }
     }
     
-    let reference_key = reference_key.ok_or_else(|| {
-        anyhow::anyhow!("No sequences found in input files")
-    })?;
+    if all_keys.is_empty() {
+        anyhow::bail!("No sequences found in input files");
+    }
     
-    // Sort keys alphabetically, but keep reference first
-    let mut sample_keys: Vec<String> = all_keys.iter()
-        .filter(|k| *k != &reference_key)
-        .cloned()
-        .collect();
-    sample_keys.sort();
+    // Sort all keys alphabetically
+    all_keys.sort();
     
-    // Final order: reference first, then sorted samples
-    let all_keys: Vec<String> = std::iter::once(reference_key.clone())
-        .chain(sample_keys)
-        .collect();
-    
-    eprintln!("Found {} sequences, reference: {}", all_keys.len(), reference_key);
+    eprintln!("Found {} sequences", all_keys.len());
     
     // Prepare VCF output
     let mut vcf_lines: Vec<String> = Vec::new();
@@ -312,12 +292,6 @@ fn run_vcf_mode(
         for seq in &alignment.sequences {
             let key = extract_key(&seq.id, delimiter);
             seq_map.insert(key, seq.as_bytes());
-        }
-        
-        // Check if reference is in this file
-        if !seq_map.contains_key(&reference_key) {
-            eprintln!("  {} : skipped (reference '{}' not found)", chrom, reference_key);
-            continue;
         }
         
         // Single pass: collect alleles using bit flags and track if site has only real NTs
@@ -370,7 +344,7 @@ fn run_vcf_mode(
                 continue;
             }
             
-            // Decode alleles from bit flags
+            // Decode alleles from bit flags (alphabetical order: A, C, G, T)
             let allele_bits = seen_nt[pos];
             let alleles: Vec<u8> = [b'A', b'C', b'G', b'T']
                 .iter()
@@ -379,9 +353,19 @@ fn run_vcf_mode(
                 .map(|(base, _)| *base)
                 .collect();
             
-            // Get REF from reference sequence
-            let ref_seq = seq_map.get(&reference_key).unwrap();
-            let ref_base = ref_seq[pos].to_ascii_uppercase();
+            // REF = first sample (alphabetically) with an actual ACGT at this position
+            // ALT = the other allele
+            let mut ref_base: Option<u8> = None;
+            for key in &all_keys {
+                if let Some(seq) = seq_map.get(key) {
+                    let b = seq[pos].to_ascii_uppercase();
+                    if b == alleles[0] || b == alleles[1] {
+                        ref_base = Some(b);
+                        break;
+                    }
+                }
+            }
+            let ref_base = ref_base.unwrap(); // Safe: biallelic means at least one sample has each allele
             let alt_base = if alleles[0] == ref_base { alleles[1] } else { alleles[0] };
             
             // Build genotypes for all samples
@@ -393,8 +377,7 @@ fn run_vcf_mode(
                         else if b == alt_base { "1".to_string() }
                         else { ".".to_string() } // N, ?, or other -> missing
                     } else {
-                        ".".to_string() // Sequence not in file -> missing
-                    }
+                        ".".to_string() } // Sequence not in file -> missing
                 })
                 .collect();
             
