@@ -233,9 +233,22 @@ fn run_vcf_mode(
     let mut seen_keys: HashSet<String> = HashSet::new();
     let mut suspect_files: Vec<(String, usize, usize, f64)> = Vec::new();
     
-    eprintln!("Pass 1: Scanning {} file(s) for sequence IDs...", files.len());
+    // Progress tracking for large file sets (>100 files)
+    let show_progress = files.len() > 100;
+    let progress_step = if show_progress { files.len() / 100 } else { 1 };
     
-    for file_path in files {
+    eprint!("Pass 1: Scanning {} file(s) for sequence IDs", files.len());
+    if show_progress {
+        eprint!(" (each dot = ~1%)");
+    }
+    eprintln!("...");
+    
+    for (file_idx, file_path) in files.iter().enumerate() {
+        // Print progress dot every 1%
+        if show_progress && file_idx > 0 && file_idx % progress_step == 0 {
+            eprint!(".");
+            let _ = std::io::stderr().flush();
+        }
         let alignment = parse_file_with_options(file_path, forced_format)?;
         
         // Validate: must be a valid alignment
@@ -305,15 +318,41 @@ fn run_vcf_mode(
     // Sort all keys alphabetically
     all_keys.sort();
     
+    if show_progress {
+        eprintln!(); // Newline after progress dots
+    }
     eprintln!("Found {} sequences", all_keys.len());
     
     // Prepare VCF output
     let mut vcf_lines: Vec<String> = Vec::new();
     
     // Pass 2: Process each file to find SNPs
-    eprintln!("Pass 2: Scanning for biallelic SNPs (min flanking distance: {})...", min_dist);
+    // Log file for per-file details when processing many files
+    let log_path = "seqtui_vcf.log";
+    let mut log_file = if show_progress {
+        Some(std::fs::File::create(log_path)?)
+    } else {
+        None
+    };
     
-    for file_path in files {
+    if let Some(ref mut log) = log_file {
+        writeln!(log, "# SeqTUI VCF mode - per-file SNP counts")?;
+        writeln!(log, "# Min flanking distance: {}", min_dist)?;
+        writeln!(log, "# Chrom\tSites\tSNPs")?;
+    }
+    
+    eprint!("Pass 2: Scanning for biallelic SNPs (min flanking distance: {})", min_dist);
+    if show_progress {
+        eprint!(" (each dot = ~1%)");
+    }
+    eprintln!("...");
+    
+    for (file_idx, file_path) in files.iter().enumerate() {
+        // Print progress dot every 1%
+        if show_progress && file_idx > 0 && file_idx % progress_step == 0 {
+            eprint!(".");
+            let _ = std::io::stderr().flush();
+        }
         let alignment = parse_file_with_options(file_path, forced_format)?;
         let chrom = get_chrom_name(file_path);
         let aln_len = alignment.alignment_length();
@@ -427,7 +466,17 @@ fn run_vcf_mode(
             snp_count += 1;
         }
         
-        eprintln!("  {} : {} sites, {} isolated biallelic SNPs selected", chrom, aln_len, snp_count);
+        // Log per-file info (to file if many files, to stderr otherwise)
+        if let Some(ref mut log) = log_file {
+            writeln!(log, "{}\t{}\t{}", chrom, aln_len, snp_count)?;
+        } else {
+            eprintln!("  {} : {} sites, {} isolated biallelic SNPs selected", chrom, aln_len, snp_count);
+        }
+    }
+    
+    if show_progress {
+        eprintln!(); // Newline after progress dots
+        eprintln!("Per-file details written to: {}", log_path);
     }
     
     // Write VCF output
