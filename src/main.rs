@@ -45,7 +45,13 @@ fn run_cli_mode(
     translate: bool,
     genetic_code: u8,
     reading_frame: u8,
+    force: bool,
 ) -> Result<()> {
+    // Validate nucleotide content if translating
+    if translate {
+        validate_nucleotide_files(&[file_path.clone()], forced_format, force, "Translation")?;
+    }
+    
     // Parse the input file
     let alignment = parse_file_with_options(file_path, forced_format)?;
 
@@ -131,6 +137,86 @@ fn get_chrom_name(file_path: &PathBuf) -> String {
         .to_string()
 }
 
+/// Computes nucleotide statistics for an alignment.
+/// Returns (nt_count, total_count, nt_ratio) where nt_count is the number of
+/// ACGT characters and total_count excludes gaps and missing data (N, ?).
+fn compute_nt_stats(alignment: &Alignment) -> (usize, usize, f64) {
+    let mut nt_count = 0usize;
+    let mut total_count = 0usize;
+    
+    for seq in &alignment.sequences {
+        for &b in seq.as_bytes() {
+            match b.to_ascii_uppercase() {
+                b'A' | b'C' | b'G' | b'T' => {
+                    nt_count += 1;
+                    total_count += 1;
+                }
+                b'-' | b'N' | b'?' => {} // Skip gaps and missing
+                _ => total_count += 1,   // Non-NT character
+            }
+        }
+    }
+    
+    let ratio = if total_count > 0 {
+        nt_count as f64 / total_count as f64
+    } else {
+        1.0 // Empty sequences are considered NT
+    };
+    
+    (nt_count, total_count, ratio)
+}
+
+/// Validates that files appear to contain nucleotide sequences.
+/// Returns Ok(()) if all files pass, or an error with details if not.
+/// Files with <50% ACGT characters (excluding gaps/N/?) are flagged.
+fn validate_nucleotide_files(
+    files: &[PathBuf],
+    forced_format: Option<FileFormat>,
+    force: bool,
+    mode_name: &str,
+) -> Result<()> {
+    let mut suspect_files: Vec<(String, usize, usize, f64)> = Vec::new();
+    
+    for file_path in files {
+        let alignment = parse_file_with_options(file_path, forced_format)?;
+        let (nt_count, total_count, ratio) = compute_nt_stats(&alignment);
+        
+        if ratio < 0.5 {
+            suspect_files.push((
+                file_path.display().to_string(),
+                nt_count,
+                total_count,
+                ratio,
+            ));
+        }
+    }
+    
+    if !suspect_files.is_empty() && !force {
+        // Write log file with details
+        let log_path = "seqtui_nt_check.log";
+        let mut log_file = std::fs::File::create(log_path)?;
+        writeln!(log_file, "# Nucleotide content check for {} mode", mode_name)?;
+        writeln!(log_file, "# Files with <50% ACGT characters (likely amino acid sequences)")?;
+        writeln!(log_file, "#")?;
+        writeln!(log_file, "# File\tACGT_count\tTotal_chars\tACGT_ratio")?;
+        for (path, nt, total, ratio) in &suspect_files {
+            writeln!(log_file, "{}\t{}\t{}\t{:.1}%", path, nt, total, ratio * 100.0)?;
+        }
+        
+        anyhow::bail!(
+            "{} mode requires nucleotide sequences, but {} file(s) appear to be amino acids:\n\
+            - Less than 50% of characters are ACGT (excluding gaps/N/?)\n\
+            - Details written to: {}\n\
+            - Use --force to proceed anyway",
+            mode_name,
+            suspect_files.len(),
+            log_path
+        );
+    }
+    
+    Ok(())
+}
+
 /// Runs VCF mode: extract biallelic SNPs with minimum flanking distance
 fn run_vcf_mode(
     files: &[PathBuf],
@@ -138,8 +224,12 @@ fn run_vcf_mode(
     output: &str,
     min_dist: usize,
     delimiter: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
+    
+    // Validate that files contain nucleotide sequences
+    validate_nucleotide_files(files, forced_format, force, "VCF")?;
     
     // Pass 1: Collect all sequence IDs and identify reference
     let mut all_keys: Vec<String> = Vec::new();
@@ -369,6 +459,11 @@ fn run_concatenation_mode(
     force: bool,
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
+    
+    // Validate nucleotide content if translating
+    if translate {
+        validate_nucleotide_files(files, forced_format, force, "Translation")?;
+    }
     
     let codes = GeneticCodes::new();
     let code = codes.get(genetic_code).ok_or_else(|| {
@@ -668,8 +763,7 @@ struct Args {
     #[arg(short = 'v', long = "vcf", value_name = "MIN_DIST")]
     vcf: Option<usize>,
 
-    /// Force concatenation even if sequence ID matching looks suspicious
-    /// (more than 30% of output IDs appear in only one file)
+    /// Force operation despite warnings (suspicious ID matching or non-nucleotide sequences)
     #[arg(long = "force")]
     force: bool,
 }
@@ -755,6 +849,7 @@ fn main() -> Result<()> {
             output,
             min_dist,
             args.delimiter.as_deref(),
+            args.force,
         );
     }
 
@@ -789,6 +884,7 @@ fn main() -> Result<()> {
                 args.translate,
                 args.genetic_code,
                 args.reading_frame,
+                args.force,
             )?;
         } else {
             // TUI mode with optional preset translation settings
@@ -824,7 +920,7 @@ mod tests {
         // Use unique temp file per test to avoid race conditions
         let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let tmp_output = format!("/tmp/seqtui_test_vcf_{}.vcf", test_id);
-        run_vcf_mode(&file_paths, None, &tmp_output, min_dist, None).unwrap();
+        run_vcf_mode(&file_paths, None, &tmp_output, min_dist, None, false).unwrap();
         
         // Read and return data lines (skip header)
         let file = std::fs::File::open(&tmp_output).unwrap();
