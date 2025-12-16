@@ -257,10 +257,17 @@ fn parse_phylip_data(
         return Err(PhylipError::NoSequenceData);
     }
 
-    Ok(sequences
+    // Shrink excess capacity from sequence building
+    for (_, data) in &mut sequences {
+        data.shrink_to_fit();
+    }
+
+    let mut result: Vec<Sequence> = sequences
         .into_iter()
         .map(|(name, data)| Sequence::from_bytes(name, data))
-        .collect())
+        .collect();
+    result.shrink_to_fit();
+    Ok(result)
 }
 
 #[cfg(test)]

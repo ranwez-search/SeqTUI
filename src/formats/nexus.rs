@@ -368,11 +368,18 @@ fn parse_matrix(content: &str, ntax: usize, nchar: usize, interleave: bool, matc
         apply_matchchar_raw(&mut raw_sequences, mc);
     }
     
+    // Shrink excess capacity from sequence building
+    for (_, data) in &mut raw_sequences {
+        data.shrink_to_fit();
+    }
+    
     // Convert to Sequence objects
-    Ok(raw_sequences
+    let mut result: Vec<Sequence> = raw_sequences
         .into_iter()
         .map(|(name, data)| Sequence::from_bytes(name, data))
-        .collect())
+        .collect();
+    result.shrink_to_fit();
+    Ok(result)
 }
 
 /// Apply MATCHCHAR substitution on raw sequence data

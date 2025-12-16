@@ -81,7 +81,7 @@ fn run_cli_mode(
             anyhow::bail!("Reverse complement frames (4-6) not yet implemented");
         };
 
-        let translated_seqs: Vec<Sequence> = alignment
+        let mut translated_seqs: Vec<Sequence> = alignment
             .sequences
             .iter()
             .map(|seq| {
@@ -89,6 +89,7 @@ fn run_cli_mode(
                 Sequence::from_bytes(seq.id.clone(), aa_data)
             })
             .collect();
+        translated_seqs.shrink_to_fit();
 
         let mut translated = Alignment::new(translated_seqs);
         translated.sequence_type = SequenceType::AMINO_ACID;

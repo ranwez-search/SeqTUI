@@ -86,6 +86,7 @@ pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
     let mut current_id: Option<&str> = None;
     let mut current_seq: Vec<u8> = Vec::new();
     let mut line_number = 0;
+    let mut prev_seq_len: usize = 1000; // Track previous sequence length for better allocation
 
     for line in content.lines() {
         line_number += 1;
@@ -100,6 +101,8 @@ pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
             // Save previous sequence if exists
             if let Some(id) = current_id.take() {
                 if !current_seq.is_empty() {
+                    prev_seq_len = current_seq.len(); // Remember length for next allocation
+                    current_seq.shrink_to_fit(); // Reclaim excess capacity
                     sequences.push(Sequence::from_bytes(id, std::mem::take(&mut current_seq)));
                 }
             }
@@ -115,8 +118,8 @@ pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
             }
 
             current_id = Some(id);
-            // Pre-allocate for typical sequence line (estimate ~10KB per sequence for alignments)
-            current_seq = Vec::with_capacity(10_000);
+            // Use previous sequence length as guide (alignments have uniform length)
+            current_seq = Vec::with_capacity(prev_seq_len.max(1000));
         } else {
             // Sequence line
             if current_id.is_none() {
@@ -136,6 +139,7 @@ pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
     // Don't forget the last sequence
     if let Some(id) = current_id {
         if !current_seq.is_empty() {
+            current_seq.shrink_to_fit(); // Reclaim excess capacity
             sequences.push(Sequence::from_bytes(id, current_seq));
         }
     }
@@ -144,6 +148,7 @@ pub fn parse_fasta_fast(content: &str) -> FastaResult<Alignment> {
         return Err(FastaError::EmptyFile);
     }
 
+    sequences.shrink_to_fit(); // Reclaim excess capacity on the vector itself
     Ok(Alignment::new(sequences))
 }
 
@@ -155,6 +160,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
     let mut current_id: Option<String> = None;
     let mut current_seq: Vec<u8> = Vec::new();
     let mut line_number = 0;
+    let mut prev_seq_len: usize = 1000; // Track previous sequence length for better allocation
 
     for line_result in reader.lines() {
         line_number += 1;
@@ -170,6 +176,8 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
             // Save previous sequence if exists
             if let Some(id) = current_id.take() {
                 if !current_seq.is_empty() {
+                    prev_seq_len = current_seq.len(); // Remember length for next allocation
+                    current_seq.shrink_to_fit(); // Reclaim excess capacity
                     sequences.push(Sequence::from_bytes(id, std::mem::take(&mut current_seq)));
                 }
             }
@@ -190,7 +198,8 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
             }
 
             current_id = Some(id);
-            current_seq = Vec::with_capacity(10_000);
+            // Use previous sequence length as guide (alignments have uniform length)
+            current_seq = Vec::with_capacity(prev_seq_len.max(1000));
         } else {
             // Sequence line
             if current_id.is_none() {
@@ -209,6 +218,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
     // Don't forget the last sequence
     if let Some(id) = current_id {
         if !current_seq.is_empty() {
+            current_seq.shrink_to_fit(); // Reclaim excess capacity
             sequences.push(Sequence::from_bytes(id, current_seq));
         }
     }
@@ -217,6 +227,7 @@ pub fn parse_fasta<R: BufRead>(reader: R) -> FastaResult<Alignment> {
         return Err(FastaError::EmptyFile);
     }
 
+    sequences.shrink_to_fit(); // Reclaim excess capacity on the vector itself
     Ok(Alignment::new(sequences))
 }
 
