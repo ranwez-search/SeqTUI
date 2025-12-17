@@ -681,8 +681,8 @@ fn run_concatenation_mode(
         if translate {
             writeln!(log_file, "# Translation: code {}, frame +{}", genetic_code, frame + 1)?;
         }
-        if gap_char.is_some() {
-            writeln!(log_file, "# Mode: supermatrix (missing sequences filled with gaps)")?;
+        if let Some(fill_char) = gap_char {
+            writeln!(log_file, "# Mode: supermatrix (missing sequences filled with '{}')", fill_char)?;
         } else {
             writeln!(log_file, "# Mode: concatenation (no gap filling)")?;
         }
