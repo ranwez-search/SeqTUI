@@ -1,6 +1,6 @@
 # SeqTUI - Terminal Alignment Viewer & Toolkit
 
-A fast terminal-based viewer and command-line toolkit for sequences. View, translate, convert, and concatenate sequences aligned or not — all from the terminal.
+A fast terminal-based viewer and command-line toolkit for sequences. View, translate, convert (to FASTA), and combine sequences aligned or not — all from the terminal.
 
 Written in Rust using [ratatui](https://ratatui.rs/).
 
@@ -9,11 +9,11 @@ Written in Rust using [ratatui](https://ratatui.rs/).
 - 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
 - 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
 - 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handles ambiguity codes (R, Y, N)
-- 🧩 **Concatenation & Supermatrix**: Merge multiple alignments, fill missing with gaps
-- 🧬 **VCF Export**: Extract biallelic SNPs with flanking distance filter
+- 🧩 **Concatenation & Supermatrix**: Combine multiple alignments, fill missing with gaps
+- 🧬 **SNP Extraction**: Export isolated biallelic SNPs to VCF with flanking distance filter
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling
 - ⌨️ **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
-- 🔧 **Command-Line Mode**: Batch convert, translate, concatenate — pipe-friendly output
+- 🔧 **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
 - 🚀 **Large File Support**: Tested on 500MB+ alignments
 
 ## Installation
@@ -98,14 +98,17 @@ seqtui gene*.fasta -s -t -o supermatrix_AA.fasta
 
 ```bash
 # Files have: Human_ENS001, Human_LOC789, Mouse_ENS002, Mouse_LOC456...
-# Match on species name (before "_")
+# Match on species name (first field before "_")
 seqtui gene1.fasta gene2.fasta -d "_" -s -o supermatrix.fasta
 # Output sequences: Human, Mouse, ... (matched across files)
+
+# Keep multiple fields: Ae_bicornis_contig257 → Ae_bicornis
+seqtui gene*.fasta -f 1,2 -d "_" -s -o supermatrix.fasta
 ```
 
-### VCF Export (Biallelic SNPs)
+### SNP Extraction (VCF Export)
 
-Extract biallelic SNPs from alignments with a minimum flanking monomorphic distance filter:
+Extract isolated biallelic SNPs from alignments with a minimum flanking monomorphic distance filter:
 
 ```bash
 # Extract SNPs with at least 300 monomorphic sites on each side
@@ -130,16 +133,17 @@ seqtui gene*.fasta -v 100 -d "_" -o snps.vcf
 
 | Option | Long | Description |
 |--------|------|-------------|
-| `-o` | `--output` | Output file (use `-` for stdout). Enables CLI mode |
+| `-o` | `--output` | Output file in sorted FASTA (triggers CLI mode). Use `-` for stdout |
+| | `--format` | Force input format (fasta, phylip, nexus). Default: auto-detect |
+| | `--force` | Proceed despite warnings (ID mismatches, suspect sequences) |
+| `-d` | `--delimiter` | Delimiter for splitting sequence IDs (default: `_` when -f is used) |
+| `-f` | `--fields` | Fields to keep from IDs (1-based, comma-separated). Ex: `-f 1,2` |
+| `-s` | `--supermatrix` | Fill missing sequences with a character (default: `-`) |
+| `-p` | `--partitions` | Write partition file for phylogenetic analysis |
 | `-t` | `--translate` | Translate nucleotides to amino acids |
 | `-g` | `--genetic-code` | Genetic code (1-33, default: 1 = Standard) |
 | `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
-| `-f` | `--format` | Force input format (fasta, phylip, nexus, auto) |
-| `-d` | `--delimiter` | Delimiter for ID matching (uses first field) |
-| `-s` | `--supermatrix` | Fill missing sequences (default: `-`, or `-s '?'`, `-s '.'`) |
-| `-p` | `--partitions` | Write partition file (gene boundaries) |
-| `-v` | `--vcf` | Extract biallelic SNPs to VCF (value = min flanking distance) |
-| | `--force` | Bypass safety checks (orphan IDs, non-nucleotide files) |
+| `-v` | `--vcf` | Extract isolated biallelic SNPs to VCF (value = min flanking distance) |
 
 ---
 
@@ -159,8 +163,8 @@ seqtui alignment.phy
 seqtui data.nex
 
 # Force a specific format
-seqtui -f nexus myfile.txt
-seqtui -f phylip alignment.dat
+seqtui --format nexus myfile.txt
+seqtui --format phylip alignment.dat
 
 # Preset translation settings
 seqtui sequences.fasta -g 2 -r 1    # Open with genetic code 2 preset

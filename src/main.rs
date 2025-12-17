@@ -6,7 +6,8 @@
 //!
 //! ```bash
 //! seqtui <sequence_file>
-//! seqtui -f nexus <sequence_file>  # Force format
+//! seqtui --format nexus <sequence_file>  # Force format
+//! seqtui -f 1,2 file.fasta -o out.fasta  # Extract fields 1,2 from sequence names
 //! ```
 //!
 //! ## Supported Formats
@@ -159,13 +160,53 @@ fn run_cli_mode(
     )
 }
 
-/// Extracts the matching key from a sequence ID using the delimiter.
-/// If delimiter is None, returns the full ID.
-/// If delimiter is Some, returns the first field before the delimiter.
-fn extract_key(id: &str, delimiter: Option<&str>) -> String {
+/// Extracts the matching key from a sequence ID using delimiter and field indices.
+/// 
+/// # Arguments
+/// * `id` - The sequence ID to extract from
+/// * `delimiter` - The delimiter to split on (None = return full ID)
+/// * `fields` - 1-based field indices to extract (None = field 1 only)
+/// * `file_name` - File name for error messages
+/// 
+/// # Returns
+/// The extracted key, or an error with detailed context if fields are invalid
+fn extract_key(
+    id: &str,
+    delimiter: Option<&str>,
+    fields: Option<&[usize]>,
+    file_name: &str,
+) -> Result<String> {
     match delimiter {
-        Some(delim) => id.split(delim).next().unwrap_or(id).to_string(),
-        None => id.to_string(),
+        None => Ok(id.to_string()),
+        Some(delim) => {
+            let parts: Vec<&str> = id.split(delim).collect();
+            let field_indices = fields.unwrap_or(&[1]); // Default to first field
+            
+            let mut extracted: Vec<&str> = Vec::with_capacity(field_indices.len());
+            for &field_num in field_indices {
+                if field_num == 0 {
+                    anyhow::bail!(
+                        "Invalid field number 0 (fields are 1-based)\n\
+                         File: {}\n\
+                         Sequence: '{}'",
+                        file_name, id
+                    );
+                }
+                let idx = field_num - 1; // Convert to 0-based
+                if idx >= parts.len() {
+                    anyhow::bail!(
+                        "Cannot extract field {} from sequence '{}' in file '{}'\n\
+                         Split result: {:?} ({} fields available)\n\
+                         Requested fields: {:?}",
+                        field_num, id, file_name,
+                        parts, parts.len(),
+                        field_indices
+                    );
+                }
+                extracted.push(parts[idx]);
+            }
+            Ok(extracted.join(delim))
+        }
     }
 }
 
@@ -185,6 +226,7 @@ fn run_vcf_mode(
     output: &str,
     min_dist: usize,
     delimiter: Option<&str>,
+    fields: Option<&[usize]>,
     force: bool,
 ) -> Result<()> {
     use std::collections::{HashMap, HashSet};
@@ -231,8 +273,9 @@ fn run_vcf_mode(
         }
         
         // Collect all keys
+        let file_name = file_path.display().to_string();
         for seq in &alignment.sequences {
-            let key = extract_key(&seq.id, delimiter);
+            let key = extract_key(&seq.id, delimiter, fields, &file_name)?;
             if !seen_keys.contains(&key) {
                 seen_keys.insert(key.clone());
                 all_keys.push(key);
@@ -309,9 +352,10 @@ fn run_vcf_mode(
         let aln_len = alignment.alignment_length();
         
         // Build map: key -> sequence bytes
+        let file_name = file_path.display().to_string();
         let mut seq_map: HashMap<String, &[u8]> = HashMap::new();
         for seq in &alignment.sequences {
-            let key = extract_key(&seq.id, delimiter);
+            let key = extract_key(&seq.id, delimiter, fields, &file_name)?;
             seq_map.insert(key, seq.as_bytes());
         }
         
@@ -468,6 +512,7 @@ fn run_concatenation_mode(
     genetic_code: u8,
     reading_frame: u8,
     delimiter: Option<&str>,
+    fields: Option<&[usize]>,
     gap_char: Option<char>,  // None = no gap filling, Some(c) = fill with c
     partitions_file: Option<&str>,
     force: bool,
@@ -522,9 +567,10 @@ fn run_concatenation_mode(
         file_lengths.push(aln_len);
         
         // Collect keys and track which files they appear in
+        let file_name = file_path.display().to_string();
         let mut keys_in_this_file: HashSet<String> = HashSet::new();
         for seq in &alignment.sequences {
-            let key = extract_key(&seq.id, delimiter);
+            let key = extract_key(&seq.id, delimiter, fields, &file_name)?;
             if !seen_keys.contains(&key) {
                 seen_keys.insert(key.clone());
                 all_keys.push(key.clone());
@@ -603,9 +649,10 @@ fn run_concatenation_mode(
         let expected_len = file_lengths[file_idx];
         
         // Build map of key -> sequence for this file
+        let file_name = file_path.display().to_string();
         let mut file_seqs: HashMap<String, Vec<u8>> = HashMap::new();
         for seq in &alignment.sequences {
-            let key = extract_key(&seq.id, delimiter);
+            let key = extract_key(&seq.id, delimiter, fields, &file_name)?;
             
             // Translate if needed
             let seq_data = if translate {
@@ -772,57 +819,71 @@ impl From<FormatArg> for Option<FileFormat> {
 #[command(
     author = "V. Ranwez",
     version,
-    about,
+    about = "View, translate, convert (to FASTA), and combine sequences — aligned or not.",
     long_about = None,
-    after_help = "Repository: https://github.com/ranwez-search/SeqTUI"
+    after_help = "Documentation & examples: https://github.com/ranwez-search/SeqTUI"
 )]
 struct Args {
-    /// Sequence file(s) to process (FASTA, PHYLIP, or NEXUS format)
-    /// Multiple files will be concatenated by matching sequence IDs
-    /// If omitted, opens file browser in TUI mode
+    /// Sequence file(s) to process. Multiple files are combined by matching IDs.
+    /// With one or no file, opens the interactive TUI viewer.
     files: Vec<PathBuf>,
 
-    /// Force a specific file format (overrides auto-detection)
-    #[arg(short = 'f', long = "format", value_enum, default_value = "auto")]
-    format: FormatArg,
-
-    /// Output file (enables CLI mode). Use "-" for stdout.
-    #[arg(short = 'o', long = "output")]
+    // ==================== Input/Output ====================
+    
+    /// Output file in sorted FASTA format (triggers CLI mode). Use "-" for stdout.
+    #[arg(short = 'o', long = "output", help_heading = "Input/Output")]
     output: Option<String>,
 
-    /// Translate nucleotide sequences to amino acids
-    #[arg(short = 't', long = "translate")]
-    translate: bool,
+    /// Force file format instead of auto-detection
+    #[arg(long = "format", value_enum, default_value = "auto", hide_default_value = true, help_heading = "Input/Output")]
+    format: FormatArg,
 
-    /// Genetic code for translation (1-33, default: 1 = Standard)
-    #[arg(short = 'g', long = "genetic-code", default_value = "1")]
-    genetic_code: u8,
+    /// Proceed despite warnings (ID mismatches or suspect sequence types)
+    #[arg(long = "force", help_heading = "Input/Output")]
+    force: bool,
 
-    /// Reading frame for translation (1-3, default: 1)
-    #[arg(short = 'r', long = "reading-frame", default_value = "1")]
-    reading_frame: u8,
-
-    /// Delimiter for sequence ID matching (use first field before delimiter)
-    /// Example: -d "_" matches "Human_gene1" with "Human_gene2" on "Human"
-    #[arg(short = 'd', long = "delimiter")]
+    // ==================== ID Extraction ====================
+    
+    /// Delimiter for splitting sequence IDs (default: "_" when -f is used)
+    #[arg(short = 'd', long = "delimiter", help_heading = "ID Extraction")]
     delimiter: Option<String>,
 
-    /// Fill missing sequences with gap character (default: '-', or -s '?' -s '.')
-    #[arg(short = 's', long = "supermatrix", value_name = "CHAR", default_missing_value = "-", num_args = 0..=1)]
+    /// Fields to keep from sequence IDs (1-based, comma-separated).
+    /// Example: -f 1,2 with "Ae_bicornis_contig1" → "Ae_bicornis"
+    #[arg(short = 'f', long = "fields", help_heading = "ID Extraction")]
+    fields: Option<String>,
+
+    // ==================== Multi-file Concatenation ====================
+    
+    /// Fill missing sequences with a character (default: '-').
+    /// Without -s, missing sequences are skipped (raw concatenation).
+    #[arg(short = 's', long = "supermatrix", value_name = "CHAR", default_missing_value = "-", num_args = 0..=1, help_heading = "Multi-file Concatenation")]
     supermatrix: Option<String>,
 
-    /// Write partition file (gene boundaries for phylogenetic analysis)
-    #[arg(short = 'p', long = "partitions")]
+    /// Write partition file for phylogenetic analysis
+    #[arg(short = 'p', long = "partitions", help_heading = "Multi-file Concatenation")]
     partitions: Option<String>,
 
-    /// Extract biallelic SNPs to VCF with minimum flanking monomorphic distance
-    /// Example: -v 300 requires 300 consecutive monomorphic sites on each side
-    #[arg(short = 'v', long = "vcf", value_name = "MIN_DIST")]
-    vcf: Option<usize>,
+    // ==================== Translation ====================
+    
+    /// Translate nucleotides to amino acids
+    #[arg(short = 't', long = "translate", help_heading = "Translation")]
+    translate: bool,
 
-    /// Force operation despite warnings (suspicious ID matching or non-nucleotide sequences)
-    #[arg(long = "force")]
-    force: bool,
+    /// Genetic code (1-33, default: 1 = Standard)
+    #[arg(short = 'g', long = "genetic-code", default_value = "1", hide_default_value = true, help_heading = "Translation")]
+    genetic_code: u8,
+
+    /// Reading frame (1-3)
+    #[arg(short = 'r', long = "reading-frame", default_value = "1", hide_default_value = true, help_heading = "Translation")]
+    reading_frame: u8,
+
+    // ==================== SNP Extraction ====================
+    
+    /// Extract isolated biallelic SNPs to VCF format.
+    /// Value = minimum monomorphic sites flanking each SNP.
+    #[arg(short = 'v', long = "vcf", value_name = "MIN_DIST", help_heading = "SNP Extraction")]
+    vcf: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -858,7 +919,44 @@ fn main() -> Result<()> {
         }
     };
 
-    // Validate: supermatrix/partitions/delimiter require output mode
+    // Parse and validate fields argument (1-based, comma-separated)
+    let fields: Option<Vec<usize>> = match &args.fields {
+        None => None,
+        Some(s) => {
+            let mut field_nums: Vec<usize> = Vec::new();
+            for part in s.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                let num: usize = part.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "-f/--fields requires comma-separated positive integers (got '{}')",
+                        part
+                    )
+                })?;
+                if num == 0 {
+                    anyhow::bail!("-f/--fields uses 1-based indexing (field 0 is invalid)");
+                }
+                field_nums.push(num);
+            }
+            if field_nums.is_empty() {
+                anyhow::bail!("-f/--fields requires at least one field number");
+            }
+            Some(field_nums)
+        }
+    };
+
+    // Determine effective delimiter: default to "_" when -f is used without -d
+    let effective_delimiter: Option<String> = if args.delimiter.is_some() {
+        args.delimiter.clone()
+    } else if args.fields.is_some() {
+        Some("_".to_string())  // Default delimiter when -f is used alone
+    } else {
+        None
+    };
+
+    // Validate: supermatrix/partitions/delimiter/fields require output mode
     if args.output.is_none() {
         if args.supermatrix.is_some() {
             anyhow::bail!("-s/--supermatrix requires -o/--output");
@@ -869,8 +967,8 @@ fn main() -> Result<()> {
         if args.vcf.is_some() {
             anyhow::bail!("-v/--vcf requires -o/--output");
         }
-        if args.delimiter.is_some() && args.files.len() > 1 {
-            anyhow::bail!("-d/--delimiter with multiple files requires -o/--output");
+        if (args.delimiter.is_some() || args.fields.is_some()) && args.files.len() > 1 {
+            anyhow::bail!("-d/--delimiter or -f/--fields with multiple files requires -o/--output");
         }
     }
 
@@ -913,7 +1011,8 @@ fn main() -> Result<()> {
             forced_format,
             output,
             min_dist,
-            args.delimiter.as_deref(),
+            effective_delimiter.as_deref(),
+            fields.as_deref(),
             args.force,
         );
     }
@@ -931,7 +1030,8 @@ fn main() -> Result<()> {
             args.translate,
             args.genetic_code,
             args.reading_frame,
-            args.delimiter.as_deref(),
+            effective_delimiter.as_deref(),
+            fields.as_deref(),
             gap_char,
             args.partitions.as_deref(),
             args.force,
@@ -985,7 +1085,7 @@ mod tests {
         // Use unique temp file per test to avoid race conditions
         let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let tmp_output = format!("/tmp/seqtui_test_vcf_{}.vcf", test_id);
-        run_vcf_mode(&file_paths, None, &tmp_output, min_dist, None, false).unwrap();
+        run_vcf_mode(&file_paths, None, &tmp_output, min_dist, None, None, false).unwrap();
         
         // Read and return data lines (skip header)
         let file = std::fs::File::open(&tmp_output).unwrap();
@@ -1181,6 +1281,7 @@ mod tests {
             1,              // genetic code (unused)
             1,              // frame (unused)
             None,           // no delimiter
+            None,           // no fields
             Some('-'),      // supermatrix mode with gap filling
             None,           // no partitions file
             true,           // force (skip ID mismatch check)
@@ -1215,5 +1316,92 @@ mod tests {
         let _ = std::fs::remove_file(&tmp_output);
         
         assert!(found_log, "Concatenation should create a log file");
+    }
+    
+    // ==================== Field Extraction Tests ====================
+    
+    #[test]
+    fn test_extract_key_no_delimiter() {
+        // Without delimiter, return full ID
+        let result = extract_key("Ae_bicornis_contig257", None, None, "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Ae_bicornis_contig257");
+    }
+    
+    #[test]
+    fn test_extract_key_default_first_field() {
+        // With delimiter but no fields specified, return first field
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), None, "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Ae");
+    }
+    
+    #[test]
+    fn test_extract_key_single_field() {
+        // Extract field 2
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), Some(&[2]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "bicornis");
+    }
+    
+    #[test]
+    fn test_extract_key_multiple_fields() {
+        // Extract fields 1 and 2
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), Some(&[1, 2]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Ae_bicornis");
+    }
+    
+    #[test]
+    fn test_extract_key_three_fields() {
+        // Extract fields 1, 2, 3 from a 4-field ID
+        let result = extract_key("Ae_bicornis_indiv2_contig257", Some("_"), Some(&[1, 2, 3]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Ae_bicornis_indiv2");
+    }
+    
+    #[test]
+    fn test_extract_key_reverse_order() {
+        // Extract fields in reverse order: 2, 1
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), Some(&[2, 1]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "bicornis_Ae");
+    }
+    
+    #[test]
+    fn test_extract_key_duplicate_fields() {
+        // Duplicate fields allowed: 1, 1, 2
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), Some(&[1, 1, 2]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Ae_Ae_bicornis");
+    }
+    
+    #[test]
+    fn test_extract_key_field_out_of_range() {
+        // Request field 4 from ID with only 3 parts -> error
+        let result = extract_key("Ae_bicornis_contig257", Some("_"), Some(&[1, 2, 4]), "test.fa");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Cannot extract field 4"), "Error should mention field 4");
+        assert!(err.contains("Ae_bicornis_contig257"), "Error should include full sequence name");
+        assert!(err.contains("test.fa"), "Error should include file name");
+        assert!(err.contains("3 fields available"), "Error should mention available field count");
+    }
+    
+    #[test]
+    fn test_extract_key_field_zero_invalid() {
+        // Field 0 is invalid (1-based indexing)
+        let result = extract_key("Ae_bicornis", Some("_"), Some(&[0, 1]), "test.fa");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("1-based"), "Error should mention 1-based indexing");
+    }
+    
+    #[test]
+    fn test_extract_key_different_delimiter() {
+        // Use different delimiter
+        let result = extract_key("species.gene.variant", Some("."), Some(&[1, 2]), "test.fa");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "species.gene");
     }
 }
