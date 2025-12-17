@@ -19,6 +19,9 @@ thiserror = "1.0"
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 
+# Random number generation (for log file names)
+rand = "0.9"
+
 # Text wrapping
 textwrap = "0.16"
 

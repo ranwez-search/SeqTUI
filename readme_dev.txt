@@ -438,7 +438,7 @@ CONCATENATION ALGORITHM:
           Validate alignments if -s (supermatrix mode)
           Record alignment length per file (for gap filling)
           Check orphan ratio: if >30% IDs appear in only 1 file, abort
-            - Writes seqtui_ids.log with all IDs (orphans marked with *)
+            - Writes <output>_<random>.log with all IDs (orphans marked with *)
             - Suggests -d delimiter or --force to proceed
   
   Pass 2: For each file:
@@ -447,6 +447,16 @@ CONCATENATION ALGORITHM:
           - Track partition boundaries
   
   Output: Write concatenated sequences + optional partition file
+          Always writes log file with per-file stats and warnings
+
+LOG FILE NAMING CONVENTION:
+  All log files use the pattern: <prefix>_<6_random_chars>.log
+  - If output file specified: prefix = output file stem
+    Example: -o results/supermatrix.fasta → results/supermatrix_a7f3k2.log
+  - If output is stdout (-o -) or none: prefix = "seqtui"
+    Example: -o - → seqtui_b2x9m1.log (in current directory)
+  - Random suffix prevents overwrites in HPC parallel jobs
+  - Files grouped with output (ls supermatrix* shows all related files)
 
 ID MATCHING:
   - Default: full sequence ID
@@ -457,14 +467,14 @@ ID MATCHING:
 ORPHAN ID DETECTION:
   - Orphan = ID that appears in only one input file
   - If orphan_count / total_output_ids > 0.30, likely delimiter problem
-  - Error message suggests -d and writes IDs to seqtui_ids.log
+  - Error message suggests -d and writes IDs to <output>_ids_<random>.log
   - --force bypasses this check
 
 NUCLEOTIDE VALIDATION:
   - Translation and VCF modes require nucleotide sequences
   - Files with <50% ACGT characters (excluding gaps/N/?) are flagged
   - Error suggests the file may be amino acids
-  - Details written to seqtui_nt_check.log
+  - Details written to <output>_nt_check_<random>.log
   - --force bypasses this check
 
 ================================================================================
@@ -497,6 +507,11 @@ VCF OUTPUT FORMAT:
   - Site excluded: any present sequence has gap (-) at that position
   - INFO: DL=distance_left;DR=distance_right
   - Each input file becomes a separate CHROM (basename without extension)
+
+VCF LOG FILES:
+  - Per-file SNP counts written to <output>_vcf_<random>.log (>100 files)
+  - NT validation errors written to <output>_nt_check_<random>.log
+  - Log files use same naming convention as concatenation mode
 
 BIT FLAG OPTIMIZATION:
   - Alleles tracked with bit flags: A=1, C=2, G=4, T=8
@@ -555,6 +570,29 @@ cargo build --release
 
 # Check for issues
 cargo clippy
+
+TEST STRUCTURE:
+  src/lib.rs tests (74 tests):
+    - formats/fasta.rs: FASTA parsing edge cases
+    - formats/nexus.rs: NEXUS parsing (interleaved, matchchar, etc.)
+    - formats/phylip.rs: PHYLIP parsing (sequential, interleaved)
+    - formats/mod.rs: Format detection tests
+    - genetic_code.rs: Translation and ambiguity codes
+    - model.rs: State management, search, cursor movement
+    - event.rs: Keyboard input and action handling
+    - ui.rs: Color rendering
+    - controller.rs: App state creation
+  
+  src/main.rs tests (12 tests):
+    - VCF mode: SNP detection, flanking distances, exclusion rules
+    - Log file generation: path patterns, uniqueness, directory handling
+    - Concatenation: log file creation and content
+  
+  Test data:
+    - test_data/alignment.fasta: 5 sequences, 200 sites
+    - test_data/unaligned.fasta: Unaligned sequences (for error testing)
+    - test_data/LOC_01790.nex: NEXUS file with 27 sequences
+    - test_data/vcf_tests/*.fa: VCF mode test cases
 
 ================================================================================
 CONTACT / CONTEXT

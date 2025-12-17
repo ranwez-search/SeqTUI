@@ -31,11 +31,45 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use rand::Rng;
 
 use seqtui::controller::{run_app_with_loading, run_app_with_file_browser};
 use seqtui::formats::{parse_file_with_options, FileFormat};
 use seqtui::genetic_code::GeneticCodes;
 use seqtui::model::{Alignment, Sequence, SequenceType};
+
+/// Generates a log file path based on the output file (if any) with a random suffix.
+/// 
+/// Format: `<prefix>_<suffix>_<6_random_chars>.log`
+/// - If output is a file path: prefix is the file stem (e.g., `output.fasta` -> `output_vcf_a7f3k2.log`)
+/// - If output is "-" (stdout) or None: prefix is "seqtui" (e.g., `seqtui_vcf_a7f3k2.log`)
+/// 
+/// The log file is created in the same directory as the output file, or current directory if stdout.
+fn generate_log_path(output: Option<&str>, suffix_hint: &str) -> PathBuf {
+    // Generate 6 random alphanumeric characters
+    let random_suffix: String = rand::rng()
+        .sample_iter(&rand::distr::Alphanumeric)
+        .take(6)
+        .map(|c| (c as char).to_ascii_lowercase())
+        .collect();
+    
+    match output {
+        Some("-") | None => {
+            // Output to stdout or no output specified - use seqtui prefix in current directory
+            PathBuf::from(format!("seqtui_{}_{}.log", suffix_hint, random_suffix))
+        }
+        Some(path) => {
+            // Output to file - use same directory and stem as prefix
+            let output_path = PathBuf::from(path);
+            let parent = output_path.parent().unwrap_or(std::path::Path::new("."));
+            let stem = output_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("seqtui");
+            parent.join(format!("{}_{}.log", stem, random_suffix))
+        }
+    }
+}
 
 /// Runs CLI mode: parse file, optionally translate, and write to output.
 fn run_cli_mode(
@@ -208,9 +242,9 @@ fn run_vcf_mode(
     
     // Report suspect files if any (unless --force)
     if !suspect_files.is_empty() && !force {
-        let log_path = "seqtui_nt_check.log";
-        let mut log_file = std::fs::File::create(log_path)?;
-        writeln!(log_file, "# Nucleotide content check for VCF mode")?;
+        let log_path = generate_log_path(Some(output), "nt_check");
+        let mut log_file = std::fs::File::create(&log_path)?;
+        writeln!(log_file, "# SeqTUI - Nucleotide content check for VCF mode")?;
         writeln!(log_file, "# Files with <50% ACGT characters (likely amino acid sequences)")?;
         writeln!(log_file, "#")?;
         writeln!(log_file, "# File\tACGT_ratio")?;
@@ -224,7 +258,7 @@ fn run_vcf_mode(
             - Details written to: {}\n\
             - Use --force to proceed anyway",
             suspect_files.len(),
-            log_path
+            log_path.display()
         );
     }
     
@@ -245,9 +279,9 @@ fn run_vcf_mode(
     
     // Pass 2: Process each file to find SNPs
     // Log file for per-file details when processing many files
-    let log_path = "seqtui_vcf.log";
+    let log_path = generate_log_path(Some(output), "vcf");
     let mut log_file = if show_progress {
-        Some(std::fs::File::create(log_path)?)
+        Some(std::fs::File::create(&log_path)?)
     } else {
         None
     };
@@ -393,7 +427,7 @@ fn run_vcf_mode(
     
     if show_progress {
         eprintln!(); // Newline after progress dots
-        eprintln!("Per-file details written to: {}", log_path);
+        eprintln!("Per-file details written to: {}", log_path.display());
     }
     
     // Write VCF output
@@ -517,10 +551,10 @@ fn run_concatenation_mode(
     let orphan_ratio = orphan_count as f64 / output_count as f64;
     if orphan_ratio > 0.30 && !force {
         // Write log file with all output IDs
-        let log_path = "seqtui_ids.log";
-        let mut log_file = std::fs::File::create(log_path)?;
+        let log_path = generate_log_path(Some(output), "ids");
+        let mut log_file = std::fs::File::create(&log_path)?;
         use std::io::Write;
-        writeln!(log_file, "# Output sequence IDs from concatenation")?;
+        writeln!(log_file, "# SeqTUI - Output sequence IDs from concatenation")?;
         writeln!(log_file, "# {} IDs total, {} appear in only one file ({:.1}%)", 
                  output_count, orphan_count, orphan_ratio * 100.0)?;
         writeln!(log_file, "# IDs marked with * appear in only one file")?;
@@ -540,7 +574,7 @@ fn run_concatenation_mode(
             - Check if you need -d/--delimiter to extract a common prefix\n\
             - List of output IDs written to: {} (orphans marked with *)\n\
             - Use --force to proceed anyway",
-            orphan_ratio * 100.0, orphan_count, output_count, log_path
+            orphan_ratio * 100.0, orphan_count, output_count, log_path.display()
         );
     }
     
@@ -554,6 +588,13 @@ fn run_concatenation_mode(
     // Track partitions
     let mut partitions: Vec<(String, usize, usize)> = Vec::new(); // (name, start, end)
     let mut current_pos: usize = 1; // 1-based for partition file
+    
+    // Collect statistics and warnings for log file
+    let mut file_stats: Vec<(String, usize, usize)> = Vec::new(); // (file, seqs, sites)
+    let mut warnings: Vec<String> = Vec::new();
+    
+    // Log file for per-file details (always created for concatenation)
+    let log_path = generate_log_path(Some(output), "concat");
     
     eprintln!("Pass 2: Concatenating sequences...");
     
@@ -575,11 +616,13 @@ fn run_concatenation_mode(
             
             // Check for duplicate keys in same file
             if file_seqs.contains_key(&key) {
-                eprintln!(
-                    "Warning: Duplicate key '{}' in file {} (using first occurrence)",
+                let warning = format!(
+                    "Duplicate key '{}' in file {} (using first occurrence)",
                     key,
                     file_path.display()
                 );
+                eprintln!("Warning: {}", warning);
+                warnings.push(warning);
                 continue;
             }
             
@@ -608,12 +651,8 @@ fn run_concatenation_mode(
         partitions.push((gene_name.to_string(), current_pos, end_pos));
         current_pos = end_pos + 1;
         
-        eprintln!(
-            "  {} : {} sequences, {} sites",
-            file_path.display(),
-            file_seqs.len(),
-            expected_len
-        );
+        // Record file stats
+        file_stats.push((file_path.display().to_string(), file_seqs.len(), expected_len));
     }
     
     // Validate: if not filling gaps, check that all sequences have the same length
@@ -621,16 +660,51 @@ fn run_concatenation_mode(
         let total_len: usize = file_lengths.iter().sum();
         for (key, data) in &seq_data {
             if data.len() != total_len {
-                eprintln!(
-                    "Warning: Sequence '{}' has length {} (expected {}). \
+                let warning = format!(
+                    "Sequence '{}' has length {} (expected {}). \
                     Use -s/--supermatrix to fill missing with gaps.",
                     key,
                     data.len(),
                     total_len
                 );
+                eprintln!("Warning: {}", warning);
+                warnings.push(warning);
             }
         }
     }
+    
+    // Write log file with per-file statistics and warnings
+    {
+        let mut log_file = std::fs::File::create(&log_path)?;
+        writeln!(log_file, "# SeqTUI concatenation log")?;
+        writeln!(log_file, "# Output: {}", output)?;
+        if translate {
+            writeln!(log_file, "# Translation: code {}, frame +{}", genetic_code, frame + 1)?;
+        }
+        if gap_char.is_some() {
+            writeln!(log_file, "# Mode: supermatrix (missing sequences filled with gaps)")?;
+        } else {
+            writeln!(log_file, "# Mode: concatenation (no gap filling)")?;
+        }
+        writeln!(log_file, "#")?;
+        writeln!(log_file, "# Per-file statistics:")?;
+        writeln!(log_file, "# File\tSequences\tSites")?;
+        for (file, seqs, sites) in &file_stats {
+            writeln!(log_file, "{}\t{}\t{}", file, seqs, sites)?;
+        }
+        if !warnings.is_empty() {
+            writeln!(log_file, "#")?;
+            writeln!(log_file, "# Warnings ({}):", warnings.len())?;
+            for warning in &warnings {
+                writeln!(log_file, "# WARNING: {}", warning)?;
+            }
+        }
+        writeln!(log_file, "#")?;
+        let total_sites: usize = file_stats.iter().map(|(_, _, s)| s).sum();
+        writeln!(log_file, "# Summary: {} files, {} output sequences, {} total sites", 
+                 file_stats.len(), all_keys.len(), total_sites)?;
+    }
+    eprintln!("Log written to: {}", log_path.display());
     
     // Write output
     let seq_count = all_keys.len();
@@ -1034,5 +1108,112 @@ mod tests {
         // SNP with gap in one sample -> site excluded entirely
         let lines = run_vcf_test(&["snp_with_gap.fa"], 30);
         assert_eq!(lines.len(), 0, "SNP with gap should be excluded");
+    }
+    
+    #[test]
+    fn test_generate_log_path_with_output_file() {
+        // Test log path generation with a regular output file
+        let log_path = generate_log_path(Some("output.fasta"), "concat");
+        let log_str = log_path.to_string_lossy();
+        
+        // Should start with "output_" and end with ".log"
+        assert!(log_str.starts_with("output_"), "Log should start with output prefix");
+        assert!(log_str.ends_with(".log"), "Log should end with .log");
+        assert!(log_str.contains("_"), "Log should contain underscore separator");
+        
+        // Should be 6 random chars between prefix and .log
+        // Format: output_<6chars>.log
+        let without_ext = log_str.trim_end_matches(".log");
+        let suffix = without_ext.strip_prefix("output_").unwrap();
+        assert_eq!(suffix.len(), 6, "Random suffix should be 6 characters");
+        assert!(suffix.chars().all(|c| c.is_ascii_alphanumeric()), 
+                "Suffix should be alphanumeric");
+    }
+    
+    #[test]
+    fn test_generate_log_path_with_stdout() {
+        // Test log path generation when output is stdout
+        let log_path = generate_log_path(Some("-"), "vcf");
+        let log_str = log_path.to_string_lossy();
+        
+        // Should use seqtui prefix
+        assert!(log_str.starts_with("seqtui_vcf_"), "Log should start with seqtui_vcf_ prefix");
+        assert!(log_str.ends_with(".log"), "Log should end with .log");
+    }
+    
+    #[test]
+    fn test_generate_log_path_with_directory() {
+        // Test log path generation with output in a subdirectory
+        let log_path = generate_log_path(Some("/tmp/subdir/result.fa"), "concat");
+        let log_str = log_path.to_string_lossy();
+        
+        // Should preserve directory
+        assert!(log_str.starts_with("/tmp/subdir/result_"), 
+                "Log should be in same directory as output");
+        assert!(log_str.ends_with(".log"), "Log should end with .log");
+    }
+    
+    #[test]
+    fn test_generate_log_path_uniqueness() {
+        // Test that multiple calls generate different paths
+        let path1 = generate_log_path(Some("test.fa"), "concat");
+        let path2 = generate_log_path(Some("test.fa"), "concat");
+        
+        assert_ne!(path1, path2, "Each call should generate a unique log path");
+    }
+    
+    #[test]
+    fn test_concatenation_creates_log_file() {
+        let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let tmp_output = format!("/tmp/seqtui_test_concat_{}.fasta", test_id);
+        
+        // Run concatenation with two test files
+        let files = vec![
+            PathBuf::from("test_data/alignment.fasta"),
+            PathBuf::from("test_data/LOC_01790.nex"),
+        ];
+        
+        let result = run_concatenation_mode(
+            &files,
+            None,           // auto-detect format
+            &tmp_output,
+            false,          // no translation
+            1,              // genetic code (unused)
+            1,              // frame (unused)
+            None,           // no delimiter
+            Some('-'),      // supermatrix mode with gap filling
+            None,           // no partitions file
+            true,           // force (skip ID mismatch check)
+        );
+        
+        assert!(result.is_ok(), "Concatenation should succeed");
+        
+        // Find the log file that was created
+        let tmp_dir = std::path::Path::new("/tmp");
+        let output_stem = format!("seqtui_test_concat_{}", test_id);
+        let mut found_log = false;
+        
+        if let Ok(entries) = std::fs::read_dir(tmp_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&output_stem) && name.ends_with(".log") {
+                    found_log = true;
+                    // Verify log content has expected structure
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        assert!(content.contains("# SeqTUI"), "Log should have SeqTUI header");
+                        assert!(content.contains("alignment.fasta") || content.contains("LOC_01790"), 
+                                "Log should list input files");
+                    }
+                    // Clean up
+                    let _ = std::fs::remove_file(entry.path());
+                    break;
+                }
+            }
+        }
+        
+        // Clean up output file
+        let _ = std::fs::remove_file(&tmp_output);
+        
+        assert!(found_log, "Concatenation should create a log file");
     }
 }
