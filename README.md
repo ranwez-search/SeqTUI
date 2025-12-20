@@ -4,6 +4,10 @@ A fast terminal-based viewer and command-line toolkit for sequences. View, trans
 
 Written in Rust using [ratatui](https://ratatui.rs/).
 
+<p align="center">
+  <img src="docs/screenshot-help-translation.jpg" alt="SeqTUI help and translation view" width="700">
+</p>
+
 ## Features
 
 - 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
@@ -16,9 +20,23 @@ Written in Rust using [ratatui](https://ratatui.rs/).
 - 🔧 **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
 - 🚀 **Large File Support**: Tested on 500MB+ alignments
 
-## Installation
+## Download binary releases or build from source
+
+Precompiled binaries are available from the **Releases** section of the GitHub repository:
+https://github.com/ranwez-search/SeqTUI/releases
+
+**macOS note:** on first launch, macOS may block the application. In this case, allow it via  
+*System Settings → Privacy & Security*, then run it again.
+
+**terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). It was tested on WezTerm and the default macOS Terminal, but iTerm2, Alacritty, GNOME Terminal, Windows Terminal should work well too.
+
+
+Alternatively, SeqTUI can be built from source using [Rust and Cargo](https://rust-lang.org/tools/install/):
 
 ```bash
+# Install Rust and Cargo if not already installed
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
 # Clone the repository
 git clone https://github.com/ranwez-search/SeqTUI.git
 cd SeqTUI
@@ -32,6 +50,8 @@ cargo install --path .
 SeqTUI works in two modes:
 - **Interactive Viewer** (default): Opens a full-screen terminal interface
 - **Command-Line Mode** (with `-o`): Batch processing for scripts and pipelines
+
+Small test data files are available in the `test_data/` directory of the repository.
 
 ---
 
