@@ -317,6 +317,11 @@ SeqTUI was inspired by several great tools:
   - [termscp](https://github.com/veeso/termscp) - Terminal file transfer
   - [tgv](https://github.com/chroma-pipeline/tgv) - Terminal genome viewer
 
-## License
+Alternatives to SeqTUI include:
+- **[termal](https://github.com/sib-swiss/termal)** - a terminal alignment viewer with conservation scores 
+- **[alen](https://github.com/jakobnissen/alen)** - a simpler terminal alignment viewer
+- **[alv](https://github.com/arvestad/alv)** - a  terminal alignment viewer to be combined with linux commands
+- **[segul](https://www.segul.app)** - a powerful phylogenomic tools (no alignment viewer) 
 
+## License
 MIT
