@@ -25,8 +25,16 @@ rand = "0.9"
 # Text wrapping
 textwrap = "0.16"
 
-# Memory allocator (better memory return to OS)
+# Memory allocator (better memory return to OS, not relevant for Windows)
+[target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"
 
 [dev-dependencies]
 tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

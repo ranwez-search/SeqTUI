@@ -23,9 +23,13 @@
 //! - `:q`: Quit
 //! - `:h`: Help
 
-// Use jemalloc for better memory management (returns memory to OS)
+// Use jemalloc for better memory management (returns memory to OS on Linux/MacOS)
+#[cfg(not(windows))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(windows))]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: Jemalloc = Jemalloc;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
