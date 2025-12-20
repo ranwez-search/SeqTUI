@@ -243,6 +243,12 @@ fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
         return Action::Quit;
     }
 
+    // Handle Ctrl+F for search (Cmd+F is not sent as a modifier in most terminal emulators)
+    // Note: Cmd+F cannot be intercepted in most terminal environments due to OS/terminal limitations.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f') {
+        return Action::EnterSearchMode;
+    }
+
     // Handle Ctrl+U for half page up
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
         return Action::HalfPageUp;
@@ -254,25 +260,25 @@ fn handle_normal_mode(key: KeyEvent, has_number_prefix: bool) -> Action {
     }
 
     // Handle Ctrl+Left or Shift+Left for half page left
-    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT)) 
+    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT))
         && key.code == KeyCode::Left {
         return Action::HalfPageLeft;
     }
 
     // Handle Ctrl+Right or Shift+Right for half page right
-    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT)) 
+    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT))
         && key.code == KeyCode::Right {
         return Action::HalfPageRight;
     }
 
     // Handle Ctrl+Up or Shift+Up for page up
-    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT)) 
+    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT))
         && key.code == KeyCode::Up {
         return Action::PageUp;
     }
 
     // Handle Ctrl+Down or Shift+Down for page down
-    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT)) 
+    if (key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::SHIFT))
         && key.code == KeyCode::Down {
         return Action::PageDown;
     }

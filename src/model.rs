@@ -714,6 +714,23 @@ pub struct AppState {
 }
 
 impl AppState {
+        /// Goes to a specific row (1-indexed for user, like Vim :line command).
+        /// Clamps column to alignment length. Returns true if successful, false if out of range.
+        fn goto_row_1indexed(&mut self, row: usize) -> bool {
+            let num_seqs = self.active_alignment().sequence_count();
+            if row > 0 && row <= num_seqs {
+                self.cursor.row = row - 1; // 1-indexed for user
+                // Keep cursor column, but clamp to alignment length
+                let aln_len = self.active_alignment().alignment_length();
+                self.cursor.col = self.cursor.col.min(aln_len.saturating_sub(1));
+                self.ensure_cursor_visible();
+                self.status_message = None; // Clear any previous error
+                true
+            } else {
+                self.status_message = Some(format!("Invalid sequence number: {}", row));
+                false
+            }
+        }
     /// Creates a new application state with the given alignment.
     pub fn new(alignment: Alignment, file_name: String) -> Self {
         let warning = alignment.warning.clone();
@@ -1245,6 +1262,14 @@ impl AppState {
         let mut start_translation = false;
         if let AppMode::Command(ref cmd) = self.mode.clone() {
             match cmd.as_str() {
+                "$" => {
+                    let num_seqs = self.active_alignment().sequence_count();
+                    if num_seqs > 0 {
+                        self.goto_row_1indexed(num_seqs);
+                    } else {
+                        self.status_message = Some("No sequences loaded".to_string());
+                    }
+                }
                 "q" | "quit" => self.should_quit = true,
                 "h" | "help" => self.show_help(),
                 "e" | "edit" => {
@@ -1300,15 +1325,10 @@ impl AppState {
                     // Handle :number for row/sequence navigation (like Vim's :line)
                     else if let Ok(row) = cmd.parse::<usize>() {
                         let num_seqs = self.active_alignment().sequence_count();
-                        if row > 0 && row <= num_seqs {
-                            self.cursor.row = row - 1; // 1-indexed for user
-                            // Keep cursor column, but clamp to alignment length
-                            let aln_len = self.active_alignment().alignment_length();
-                            self.cursor.col = self.cursor.col.min(aln_len.saturating_sub(1));
-                            self.ensure_cursor_visible();
-                            self.status_message = None; // Clear any previous error
+                        if num_seqs > 0 {
+                            self.goto_row_1indexed(row);
                         } else {
-                            self.status_message = Some(format!("Invalid sequence number: {}", row));
+                            self.status_message = Some("No sequences loaded".to_string());
                         }
                     } else {
                         self.status_message = Some(format!("Unknown command: {}", cmd));
