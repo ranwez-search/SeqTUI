@@ -1,0 +1,62 @@
+name: Release (SeqTUI)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.platform.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # Linux (x86_64)
+          - label: Linux (x86_64)
+            runs-on: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: seqtui-${{ github.ref_name }}-linux-x86_64
+
+          # macOS (Apple Silicon)
+          - label: macOS (Apple Silicon)
+            runs-on: macos-15
+            target: aarch64-apple-darwin
+            archive: seqtui-${{ github.ref_name }}-macos-apple-silicon
+
+          # macOS (Intel)
+          - label: macOS (Intel)
+            runs-on: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: seqtui-${{ github.ref_name }}-macos-intel
+
+          # Windows (x86_64)
+          - label: Windows (x86_64)
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: seqtui-${{ github.ref_name }}-windows-x86_64
+
+    runs-on: ${{ matrix.platform.runs-on }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
+
+      - name: Publish artifacts and (on v* tags) GitHub Release
+        uses: houseabsolute/actions-rust-release@v0
+        with:
+          executable-name: seqtui
+          target: ${{ matrix.platform.target }}
+          archive-name: ${{ matrix.platform.archive }}
+          changes-file: ""
