@@ -22,7 +22,7 @@
 //! - `n`: find next match
 //! - `N`: find previous match
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
 
 use crate::model::{AppMode, AppState};
@@ -165,7 +165,21 @@ pub fn handle_event(
     has_file_browser: bool,
 ) -> Action {
     match event {
-        Event::Key(key_event) => handle_key_event(key_event, mode, show_help, pending_g, pending_z, has_number_prefix, has_error_popup, has_file_browser),
+        Event::Key(key_event) => {
+            if key_event.kind != KeyEventKind::Press {
+                return Action::None;
+            }
+            handle_key_event(
+                key_event,
+                mode,
+                show_help,
+                pending_g,
+                pending_z,
+                has_number_prefix,
+                has_error_popup,
+                has_file_browser,
+            )
+        }
         Event::Resize(width, height) => Action::Resize(width, height),
         _ => Action::None,
     }
