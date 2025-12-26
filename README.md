@@ -28,8 +28,7 @@ https://github.com/ranwez-search/SeqTUI/releases
 **macOS note:** on first launch, macOS may block the application. In this case, allow it via  
 *System Settings → Privacy & Security*, then run it again.
 
-**terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). It was tested on WezTerm and the default macOS Terminal, but iTerm2, Alacritty, GNOME Terminal, Windows Terminal should work well too.
-
+**terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). By default, SeqTUI uses an ASCII-safe interface for maximum compatibility. Optional fancy Unicode glyphs can be enabled using the `--fancy` option. While Unicode glyphs provide a nicer visual rendering, they may cause display issues on some terminal configurations, especially on Windows.
 
 Alternatively, SeqTUI can be built from source using [Rust and Cargo](https://rust-lang.org/tools/install/):
 
@@ -164,6 +163,17 @@ seqtui gene*.fasta -v 100 -d "_" -o snps.vcf
 | `-g` | `--genetic-code` | Genetic code (1-33, default: 1 = Standard) |
 | `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
 | `-v` | `--vcf` | Extract isolated biallelic SNPs to VCF (value = min flanking distance) |
+| | `--fancy` | Enable fancy Unicode glyphs in the interactive TUI (may cause issues on some terminals, especially on Windows) |
+
+### Fancy UI shortcut
+
+On Unix-like systems (Linux, macOS), you may prefer to always use the fancy Unicode interface. In this case, you can define a shell alias:
+
+```bash
+alias seqtui='seqtui --fancy'
+```
+
+This keeps the default behavior safe and portable while allowing a richer interface when explicitly requested.
 
 ---
 
