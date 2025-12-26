@@ -88,6 +88,7 @@ impl App {
         file_path: PathBuf,
         forced_format: Option<FileFormat>,
         preset_translation: Option<(u8, u8)>,
+        fancy_ui: bool,
     ) -> Result<Self> {
         // Extract file name for display
         let file_name = file_path
@@ -98,6 +99,7 @@ impl App {
 
         // Create initial state in loading mode
         let mut state = AppState::new_loading(file_name, file_path.clone());
+        state.fancy_ui = fancy_ui;
         
         // Apply preset translation settings if provided
         if let Some((genetic_code, reading_frame)) = preset_translation {
@@ -387,11 +389,12 @@ pub fn run_app(state: AppState) -> Result<()> {
 
 /// Convenience function to run the application with the file browser open.
 /// Used when no file is provided on command line.
-pub fn run_app_with_file_browser() -> Result<()> {
+pub fn run_app_with_file_browser(fancy_ui: bool) -> Result<()> {
     use crate::model::{Alignment, FileBrowserState};
     
     let start_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let mut state = AppState::new(Alignment::new(vec![]), "No file".to_string());
+    state.fancy_ui = fancy_ui;
     state.file_browser = Some(FileBrowserState::new(start_dir, "Select a sequence file".to_string()));
     
     let mut app = App::new(state)?;
@@ -404,8 +407,9 @@ pub fn run_app_with_loading(
     file_path: PathBuf,
     forced_format: Option<FileFormat>,
     preset_translation: Option<(u8, u8)>,
+    fancy_ui: bool,
 ) -> Result<()> {
-    let mut app = App::new_with_background_load(file_path, forced_format, preset_translation)?;
+    let mut app = App::new_with_background_load(file_path, forced_format, preset_translation, fancy_ui)?;
     app.run()
 }
 

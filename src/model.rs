@@ -711,6 +711,8 @@ pub struct AppState {
     pub error_popup: Option<String>,
     /// File browser state (shown when file not found)
     pub file_browser: Option<FileBrowserState>,
+    /// Whether to use fancy UI glyphs (non-Windows only)
+    pub fancy_ui: bool,
 }
 
 impl AppState {
@@ -758,6 +760,7 @@ impl AppState {
             spinner_frame: 0,
             error_popup: None,
             file_browser: None,
+            fancy_ui: false,
         }
     }
 
@@ -791,6 +794,7 @@ impl AppState {
             spinner_frame: 0,
             error_popup: None,
             file_browser: None,
+            fancy_ui: false,
         }
     }
 
@@ -980,7 +984,7 @@ impl AppState {
 
     /// Returns the current spinner character.
     pub fn spinner_char(&self) -> char {
-        const SPINNER: [char; 4] = ['⠋', '⠙', '⠹', '⠸'];
+        const SPINNER: [char; 4] = ['|', '/', '-', '\\'];
         SPINNER[self.spinner_frame]
     }
 

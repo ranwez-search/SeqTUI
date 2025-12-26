@@ -12,6 +12,8 @@
 //! - Codon highlighting
 //! - Multiple panels (file browser, etc.)
 
+mod glyphs;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -21,6 +23,7 @@ use ratatui::{
 };
 
 use crate::model::{AppMode, AppState, ViewMode};
+use glyphs::Glyphs;
 
 /// Width reserved for sequence names (including border and padding).
 const NAME_PANEL_WIDTH: u16 = 20;
@@ -106,6 +109,7 @@ fn get_color_for_sequence_type(c: char, seq_type: crate::model::SequenceType) ->
 
 /// Renders the complete UI.
 pub fn render(frame: &mut Frame, state: &AppState) {
+    let glyphs = glyphs::select(state.fancy_ui);
     let area = frame.area();
 
     // Main layout: content area + status bar + hint bar
@@ -145,17 +149,17 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Render each panel
     render_names_panel(frame, state, names_area, visible_rows);
     render_sequences_panel(frame, state, sequences_area, visible_rows, visible_cols);
-    render_status_bar(frame, state, status_area);
-    render_hint_bar(frame, hint_area);
+    render_status_bar(frame, state, &glyphs, status_area);
+    render_hint_bar(frame, &glyphs, hint_area);
 
     // Render help overlay if active
     if state.show_help {
-        render_help_overlay(frame, state, area);
+        render_help_overlay(frame, state, &glyphs, area);
     }
 
     // Render translation settings overlay if active
     if state.mode == AppMode::TranslationSettings {
-        render_translation_settings_overlay(frame, state, area);
+        render_translation_settings_overlay(frame, state, &glyphs, area);
     }
 
     // Render loading overlay if active
@@ -170,8 +174,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
     // Render file browser if active
     if let Some(browser) = &state.file_browser {
-        render_file_browser(frame, browser, area);
-    }
+        render_file_browser(frame, browser, &glyphs, area);
+}
 }
 
 /// Renders the sequence names panel (sticky, always visible).
@@ -189,7 +193,8 @@ fn render_names_panel(frame: &mut Frame, state: &AppState, area: Rect, visible_r
             // Truncate name if too long
             let max_name_len = (NAME_PANEL_WIDTH.saturating_sub(3)) as usize;
             let name = if seq.id.len() > max_name_len {
-                format!("{}…", &seq.id[..max_name_len - 1])
+                let truncate_len = max_name_len.saturating_sub(3);
+                format!("{}...", &seq.id[..truncate_len])
             } else {
                 seq.id.clone()
             };
@@ -287,7 +292,7 @@ fn render_sequences_panel(
 }
 
 /// Renders the status bar at the bottom.
-fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
+fn render_status_bar(frame: &mut Frame, state: &AppState, glyphs: &Glyphs, area: Rect) {
     let alignment = state.active_alignment();
     
     let position_info = format!(
@@ -324,7 +329,7 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
         AppMode::Command(cmd) => {
             // Mode label with cyan background, input area with white background + cursor
             let mode_label = " COMMAND ";
-            let input_with_cursor = format!(":{}█", cmd);
+            let input_with_cursor = format!(":{}{}", cmd, glyphs.cursor);
             let input_len = input_with_cursor.len() + 1; // +1 for space after
             let mode_len = mode_label.len();
             
@@ -350,7 +355,7 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
         AppMode::Search(pattern) => {
             // Search forward mode
             let mode_label = " SEARCH ";
-            let input_with_cursor = format!("/{}█", pattern);
+            let input_with_cursor = format!("/{}{}", pattern, glyphs.cursor);
             let input_len = input_with_cursor.len() + 1;
             let mode_len = mode_label.len();
             
@@ -376,7 +381,7 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
         AppMode::SearchBackward(pattern) => {
             // Search backward mode
             let mode_label = " SEARCH ";
-            let input_with_cursor = format!("?{}█", pattern);
+            let input_with_cursor = format!("?{}{}", pattern, glyphs.cursor);
             let input_len = input_with_cursor.len() + 1;
             let mode_len = mode_label.len();
             
@@ -425,7 +430,11 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// Renders the hint bar at the very bottom with basic commands.
-fn render_hint_bar(frame: &mut Frame, area: Rect) {
+fn render_hint_bar(frame: &mut Frame, glyphs: &Glyphs, area: Rect) {
+    let arrows = format!(
+        " {}{}{}{} ",
+        glyphs.arrow_left, glyphs.arrow_up, glyphs.arrow_down, glyphs.arrow_right
+    );
     let hints = vec![
         Span::styled(" :q ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
         Span::styled(" quit ", Style::default().fg(Color::Gray)),
@@ -433,7 +442,7 @@ fn render_hint_bar(frame: &mut Frame, area: Rect) {
         Span::styled(" help ", Style::default().fg(Color::Gray)),
         Span::styled(" / ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
         Span::styled(" search ", Style::default().fg(Color::Gray)),
-        Span::styled(" ←↑↓→ ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::styled(arrows, Style::default().fg(Color::Black).bg(Color::DarkGray)),
         Span::styled(" navigate ", Style::default().fg(Color::Gray)),
     ];
 
@@ -443,7 +452,7 @@ fn render_hint_bar(frame: &mut Frame, area: Rect) {
 }
 
 /// Renders a centered help overlay popup with tabs.
-fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
+fn render_help_overlay(frame: &mut Frame, state: &AppState, glyphs: &Glyphs, area: Rect) {
     use crate::model::HelpTab;
     
     // Calculate centered popup dimensions
@@ -485,6 +494,10 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
 
     match state.help_tab {
         HelpTab::Basics => {
+            let tab_hint = format!(
+                "Use {}/{} or h/l to switch tabs",
+                glyphs.arrow_left, glyphs.arrow_right
+            );
             help_lines.extend(vec![
                 Line::from(Span::styled("QUICK COMMANDS", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
@@ -500,25 +513,39 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from("  concatenate, translate, VCF export)."),
                 Line::from("  https://github.com/ranwez-search/SeqTUI"),
                 Line::from(""),
-                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(tab_hint, Style::default().fg(Color::DarkGray))),
             ]);
         }
         HelpTab::Navigation => {
+            let arrows = format!(
+                "{}{}{}{}",
+                glyphs.arrow_left, glyphs.arrow_up, glyphs.arrow_down, glyphs.arrow_right
+            );
+            let lr = format!("{}{}", glyphs.arrow_left, glyphs.arrow_right);
+            let ud = format!("{}{}", glyphs.arrow_up, glyphs.arrow_down);
+            let tab_hint = format!(
+                "Use {}/{} or h/l to switch tabs",
+                glyphs.arrow_left, glyphs.arrow_right
+            );
             help_lines.extend(vec![
                 Line::from(Span::styled("ARROW KEY NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
-                Line::from("  ←↑↓→           Move one position"),
-                Line::from("  Shift + ←→     Half page left/right"),
-                Line::from("  Shift + ↑↓     Full page up/down"),
+                Line::from(format!("  {}           Move one position", arrows)),
+                Line::from(format!("  Shift + {}     Half page left/right", lr)),
+                Line::from(format!("  Shift + {}     Full page up/down", ud)),
                 Line::from(""),
                 Line::from("  Home           Go to first column"),
                 Line::from("  End            Go to last column"),
                 Line::from("  PgUp / PgDn    Page up/down"),
                 Line::from(""),
-                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(tab_hint, Style::default().fg(Color::DarkGray))),
             ]);
         }
         HelpTab::VimNav => {
+            let tab_hint = format!(
+                "Use {}/{} or h/l to switch tabs",
+                glyphs.arrow_left, glyphs.arrow_right
+            );
             help_lines.extend(vec![
                 Line::from(Span::styled("VIM-STYLE NAVIGATION", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
@@ -531,10 +558,14 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from("  g0 / gm / g$   First/middle/last visible column"),
                 Line::from("  <num>|         Go to column (e.g., 50|)"),
                 Line::from(""),
-                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(tab_hint, Style::default().fg(Color::DarkGray))),
             ]);
         }
         HelpTab::Search => {
+            let tab_hint = format!(
+                "Use {}/{} or h/l to switch tabs",
+                glyphs.arrow_left, glyphs.arrow_right
+            );
             help_lines.extend(vec![
                 Line::from(Span::styled("SEARCH", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
@@ -546,12 +577,14 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from("  Searches both sequence names and sequences."),
                 Line::from("  Search is case-insensitive."),
                 Line::from(""),
-                Line::from(Span::styled("Use ←/→ or h/l to switch tabs", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(tab_hint, Style::default().fg(Color::DarkGray))),
             ]);
         }
         HelpTab::Translation => {
+            let ud = format!("{}/{}", glyphs.arrow_up, glyphs.arrow_down);
+            let lr = format!("{}/{}", glyphs.arrow_left, glyphs.arrow_right);
             help_lines.extend(vec![
-                Line::from(Span::styled("TRANSLATION (NT → AA)", Style::default().add_modifier(Modifier::BOLD))),
+                Line::from(Span::styled("TRANSLATION (NT -> AA)", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
                 Line::from("  :asAA          Translate (uses current settings)"),
                 Line::from("  :asNT          Switch back to nucleotide view"),
@@ -562,8 +595,8 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
                 Line::from(""),
                 Line::from(Span::styled("SETTINGS DIALOG (:setcode)", Style::default().add_modifier(Modifier::BOLD))),
                 Line::from(""),
-                Line::from("  ↑/↓ or j/k     Select genetic code (33 available)"),
-                Line::from("  ←/→ or h/l     Select reading frame (+1, +2, +3)"),
+                Line::from(format!("  {} or j/k     Select genetic code (33 available)", ud)),
+                Line::from(format!("  {} or h/l  Select reading frame (+1, +2, +3)", lr)),
                 Line::from("  Enter          Confirm       Esc  Cancel"),
             ]);
         }
@@ -580,7 +613,12 @@ fn render_help_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// Renders the translation settings overlay popup.
-fn render_translation_settings_overlay(frame: &mut Frame, state: &AppState, area: Rect) {
+fn render_translation_settings_overlay(
+    frame: &mut Frame,
+    state: &AppState,
+    glyphs: &Glyphs,
+    area: Rect,
+) {
     use crate::genetic_code::GeneticCodes;
     
     // Calculate centered popup dimensions - smaller now since we show only one code
@@ -644,8 +682,10 @@ fn render_translation_settings_overlay(frame: &mut Frame, state: &AppState, area
     
     if let Some(code) = selected_code {
         let code_label = format!("  {:2}. {}", code.id, code.name);
-        let truncated = if code_label.len() > popup_width as usize - 4 {
-            format!("{}…", &code_label[..popup_width as usize - 5])
+        let max_label_len = popup_width as usize;
+        let truncated = if code_label.len() > max_label_len.saturating_sub(4) {
+            let truncate_len = max_label_len.saturating_sub(7);
+            format!("{}...", &code_label[..truncate_len])
         } else {
             code_label
         };
@@ -659,7 +699,13 @@ fn render_translation_settings_overlay(frame: &mut Frame, state: &AppState, area
     }
     
     // Navigation hint for genetic code
-    let nav_hint = format!("  ↑/↓ to change ({}/{})", selected_idx + 1, all_codes.len());
+    let nav_hint = format!(
+        "  {}/{} to change ({}/{})",
+        glyphs.arrow_up,
+        glyphs.arrow_down,
+        selected_idx + 1,
+        all_codes.len()
+    );
     lines.push(Line::from(Span::styled(nav_hint, Style::default().fg(Color::DarkGray))));
     
     lines.push(Line::from(""));
@@ -784,7 +830,12 @@ fn render_error_popup(frame: &mut Frame, error_msg: &str, area: Rect) {
 }
 
 /// Renders the file browser overlay.
-fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserState, area: Rect) {
+fn render_file_browser(
+    frame: &mut Frame,
+    browser: &crate::model::FileBrowserState,
+    glyphs: &Glyphs,
+    area: Rect,
+) {
     // Calculate centered popup dimensions
     let popup_width = 70.min(area.width.saturating_sub(4));
     let popup_height = 20.min(area.height.saturating_sub(4));
@@ -815,7 +866,7 @@ fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserSta
         display_path,
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     )));
-    lines.push(Line::from("─".repeat((popup_width - 2) as usize)));
+    lines.push(Line::from(glyphs.h_separator.repeat((popup_width - 2) as usize)));
 
     // Determine scroll window
     let start_idx = browser.scroll_offset;
@@ -826,9 +877,9 @@ fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserSta
         let is_selected = idx == browser.selected;
 
         let (prefix, style) = if entry.is_dir {
-            ("📁 ", Style::default().fg(Color::Yellow))
+            (glyphs.dir_prefix, Style::default().fg(Color::Yellow))
         } else {
-            ("📄 ", Style::default().fg(Color::White))
+            (glyphs.file_prefix, Style::default().fg(Color::White))
         };
 
         let name_style = if is_selected {
@@ -840,7 +891,8 @@ fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserSta
         // Truncate name if too long
         let max_name_len = (popup_width - 6) as usize;
         let display_name = if entry.name.len() > max_name_len {
-            format!("{}…", &entry.name[..max_name_len - 1])
+            let truncate_len = max_name_len.saturating_sub(3);
+            format!("{}...", &entry.name[..truncate_len])
         } else {
             entry.name.clone()
         };
@@ -859,8 +911,12 @@ fn render_file_browser(frame: &mut Frame, browser: &crate::model::FileBrowserSta
 
     // Show hint at bottom
     lines.push(Line::from(""));
+    let nav_hint = format!(
+        " {}/{}:Navigate  Enter:Select  Backspace:Parent  Esc:Quit",
+        glyphs.arrow_up, glyphs.arrow_down
+    );
     lines.push(Line::from(Span::styled(
-        " ↑/↓:Navigate  Enter:Select  Backspace:Parent  Esc:Quit",
+        nav_hint,
         Style::default().fg(Color::DarkGray),
     )));
 

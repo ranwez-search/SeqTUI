@@ -888,6 +888,10 @@ struct Args {
     /// Value = minimum monomorphic sites flanking each SNP.
     #[arg(short = 'v', long = "vcf", value_name = "MIN_DIST", help_heading = "SNP Extraction")]
     vcf: Option<usize>,
+
+    /// Enable fancy Unicode glyphs in the TUI
+    #[arg(long = "fancy", help_heading = "Display")]
+    fancy: bool,
 }
 
 fn main() -> Result<()> {
@@ -999,12 +1003,14 @@ fn main() -> Result<()> {
         }
     }
 
+    let fancy_ui = args.fancy;
+
     // No files provided: open TUI with file browser
     if args.files.is_empty() {
         if args.output.is_some() {
             anyhow::bail!("CLI mode (-o/--output) requires at least one input file");
         }
-        return run_app_with_file_browser();
+        return run_app_with_file_browser(fancy_ui);
     }
 
     // VCF mode: extract biallelic SNPs
@@ -1065,6 +1071,7 @@ fn main() -> Result<()> {
                 } else {
                     None
                 },
+                fancy_ui,
             )?;
         }
     }
