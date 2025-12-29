@@ -2,7 +2,7 @@
 
 A fast terminal-based viewer and command-line toolkit for sequences. View, translate, convert (to FASTA), and combine sequences aligned or not — all from the terminal.
 
-Written in Rust using [ratatui](https://ratatui.rs/).
+Written in Rust [![Built With Ratatui](https://ratatui.rs/built-with-ratatui/badge.svg)](https://ratatui.rs/)
 
 **Author:** [Vincent Ranwez](https://github.com/ranwez)
 
