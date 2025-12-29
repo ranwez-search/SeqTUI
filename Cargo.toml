@@ -3,11 +3,11 @@ name = "seqtui"
 version = "0.1.0"
 edition = "2021"
 authors = ["V. Ranwez"]
-description = "A fast terminal-based viewer and toolkit for sequences. View, translate, convert, and concatenate — aligned or not."
+description = "Fast TUI toolkit for viewing, translating, and manipulating biological sequences."
 license = "MIT"
 readme = "README.md"
-keywords = ["tui", "bioinformatics", "sequence", "cli"]
-categories = ["command-line-utilities"]
+keywords = ["terminal", "sequence", "alignment", "snp", "viewer"]
+categories = ["science::bioinformatics"]
 repository = "https://github.com/ranwez-search/SeqTUI/"
 
 [dependencies]
