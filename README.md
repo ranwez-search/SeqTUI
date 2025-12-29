@@ -34,22 +34,30 @@ seqtui LOC_01790.nex
 seqtui alignment.fasta -t -o out_AA.fasta
 ```
 
-## Download binary releases or build from source
-
-Precompiled binaries are available from the **Releases** section of the GitHub repository:
-https://github.com/ranwez-search/SeqTUI/releases
-
-**macOS note:** on first launch, macOS may block the application. In this case, allow it via  
-*System Settings → Privacy & Security*, then run it again.
+## Installation
 
 **terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). By default, SeqTUI uses an ASCII-safe interface for maximum compatibility. Optional Unicode glyphs can be enabled using the `--fancy` option. While Unicode glyphs provide a nicer visual rendering, they may cause display issues on some terminal configurations, especially on Windows.
 
 SeqTUI has been tested on macOS using [WezTerm](https://wezterm.org), including remote use over SSH to Linux systems, and on Windows 11 using [Windows Terminal](https://learn.microsoft.com/windows/terminal/).
 
-Alternatively, SeqTUI can be built from source. First install Rust and Cargo by following the official instructions at  
-https://www.rust-lang.org/tools/install
+**macOS note:** on first launch, macOS may block the application. In this case, allow it via  
+*System Settings → Privacy & Security*, then run it again.
 
-Then clone the repository and build SeqTUI locally:
+### Precompiled binaries
+
+Precompiled binaries are available from the **Releases** section of the GitHub repository:
+https://github.com/ranwez-search/SeqTUI/releases
+
+### Installation via Cargo
+
+SeqTUI is also distributed as a [Rust crate](https://crates.io/crates/seqtui) and can be installed (or build from source) using Cargo (https://www.rust-lang.org/tools/install)
+
+**install from crate.io (recommanded)**
+
+```bash
+cargo install seqtui
+```
+**recompiled from source**
 
 ```bash
 git clone https://github.com/ranwez-search/SeqTUI.git
