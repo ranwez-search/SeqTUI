@@ -59,4 +59,7 @@ jobs:
           executable-name: seqtui
           target: ${{ matrix.platform.target }}
           archive-name: ${{ matrix.platform.archive }}
+          extra-files: |
+            examples/LOC_01790.nex
+            examples/alignment.fasta
           changes-file: ""
