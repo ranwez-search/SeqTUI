@@ -147,6 +147,8 @@ pub struct FileBrowserState {
     pub scroll_offset: usize,
     /// Error message that triggered the browser (shown in title)
     pub error_message: String,
+    /// Whether to show all files (not just known sequence extensions)
+    pub show_all_files: bool,
 }
 
 impl FileBrowserState {
@@ -158,6 +160,7 @@ impl FileBrowserState {
             selected: 0,
             scroll_offset: 0,
             error_message,
+            show_all_files: false,
         };
         browser.refresh_entries();
         browser
@@ -197,16 +200,22 @@ impl FileBrowserState {
 
                 if is_dir {
                     dirs.push(entry);
+                } else if self.show_all_files {
+                    files.push(entry);
                 } else {
                     // Only show sequence files
                     let ext = entry.path.extension()
                         .and_then(|e| e.to_str())
                         .map(|e| e.to_lowercase());
                     
-                    if matches!(ext.as_deref(), 
-                        Some("fasta" | "fa" | "fna" | "faa" | "fas" | 
-                             "phy" | "phylip" | 
-                             "nex" | "nexus" | "nxs")) {
+                    if matches!(
+                        ext.as_deref(),
+                        Some(
+                            "fasta" | "fa" | "fna" | "faa" | "fas" |
+                            "phy" | "phylip" | "aln" | "ali" |
+                            "nex" | "nexus" | "nxs"
+                        )
+                    ) {
                         files.push(entry);
                     }
                 }
@@ -265,6 +274,12 @@ impl FileBrowserState {
         } else {
             None
         }
+    }
+
+    /// Toggles whether to show all files or only known sequence extensions.
+    pub fn toggle_show_all_files(&mut self) {
+        self.show_all_files = !self.show_all_files;
+        self.refresh_entries();
     }
 }
 
@@ -888,6 +903,13 @@ impl AppState {
         }
     }
 
+    /// Toggles whether the file browser shows all files or only sequence files.
+    pub fn file_browser_toggle_show_all(&mut self) {
+        if let Some(browser) = &mut self.file_browser {
+            browser.toggle_show_all_files();
+        }
+    }
+
     /// Quits the file browser. If an alignment is loaded, just close the browser.
     /// If no alignment is loaded, quit the application.
     pub fn file_browser_quit(&mut self) {
@@ -1188,7 +1210,7 @@ impl AppState {
     }
 
     /// Ensures the cursor is visible in the viewport, with centering behavior.
-    fn ensure_cursor_visible(&mut self) {
+    fn ensure_cursor_visible_center(&mut self) {
         // Vertical scrolling - keep cursor in view
         if self.cursor.row < self.viewport.first_row {
             self.viewport.first_row = self.cursor.row;
@@ -1203,6 +1225,27 @@ impl AppState {
         } else if self.cursor.col >= self.viewport.first_col + self.viewport.visible_cols {
             // Cursor went right of viewport - center it
             self.center_column();
+        }
+
+        // Clamp viewport to valid bounds
+        self.clamp_viewport();
+    }
+
+    /// Ensures the cursor is visible in the viewport, with edge-aligned scrolling.
+    fn ensure_cursor_visible(&mut self) {
+        // Vertical scrolling - keep cursor in view
+        if self.cursor.row < self.viewport.first_row {
+            self.viewport.first_row = self.cursor.row;
+        } else if self.cursor.row >= self.viewport.first_row + self.viewport.visible_rows {
+            self.viewport.first_row = self.cursor.row.saturating_sub(self.viewport.visible_rows - 1);
+        }
+
+        // Horizontal scrolling - keep cursor on-screen without centering
+        if self.cursor.col < self.viewport.first_col {
+            self.viewport.first_col = self.cursor.col;
+        } else if self.cursor.col >= self.viewport.first_col + self.viewport.visible_cols {
+            let last_visible = self.viewport.visible_cols.saturating_sub(1);
+            self.viewport.first_col = self.cursor.col.saturating_sub(last_visible);
         }
 
         // Clamp viewport to valid bounds

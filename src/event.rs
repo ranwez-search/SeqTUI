@@ -138,6 +138,8 @@ pub enum Action {
     FileBrowserSelect,
     /// File browser: go to parent directory
     FileBrowserParent,
+    /// File browser: toggle showing all files
+    FileBrowserToggleAll,
     /// File browser: quit application
     FileBrowserQuit,
 }
@@ -199,6 +201,7 @@ fn handle_key_event(key: KeyEvent, mode: &AppMode, show_help: bool, pending_g: b
             KeyCode::Down | KeyCode::Char('j') => Action::FileBrowserDown,
             KeyCode::Enter | KeyCode::Char('l') => Action::FileBrowserSelect,
             KeyCode::Backspace | KeyCode::Char('h') => Action::FileBrowserParent,
+            KeyCode::Char('a') => Action::FileBrowserToggleAll,
             KeyCode::Esc | KeyCode::Char('q') => Action::FileBrowserQuit,
             _ => Action::None,
         };
@@ -579,6 +582,9 @@ pub fn apply_action(state: &mut AppState, action: Action) -> ActionResult {
         }
         Action::FileBrowserParent => {
             state.file_browser_parent();
+        }
+        Action::FileBrowserToggleAll => {
+            state.file_browser_toggle_show_all();
         }
         Action::FileBrowserQuit => {
             state.file_browser_quit();

@@ -38,7 +38,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use rand::Rng;
 
-use seqtui::controller::{run_app_with_loading, run_app_with_file_browser};
+use seqtui::controller::{run_app_with_loading, run_app_with_file_browser, run_app_with_file_browser_at};
 use seqtui::formats::{parse_file_with_options, FileFormat};
 use seqtui::genetic_code::GeneticCodes;
 use seqtui::model::{Alignment, Sequence, SequenceType};
@@ -1063,6 +1063,9 @@ fn main() -> Result<()> {
             )?;
         } else {
             // TUI mode with optional preset translation settings
+            if file_path.is_dir() {
+                return run_app_with_file_browser_at(file_path.clone(), fancy_ui);
+            }
             run_app_with_loading(
                 file_path.clone(),
                 forced_format,

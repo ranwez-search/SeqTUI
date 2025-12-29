@@ -868,9 +868,17 @@ fn render_file_browser(
     )));
     lines.push(Line::from(glyphs.h_separator.repeat((popup_width - 2) as usize)));
 
-    // Determine scroll window
-    let start_idx = browser.scroll_offset;
-    let end_idx = (start_idx + visible_height.saturating_sub(2)).min(browser.entries.len());
+    // Determine scroll window based on selection
+    let scroll_height = visible_height.saturating_sub(2).max(1);
+    let mut start_idx = browser.scroll_offset;
+    if browser.selected < start_idx {
+        start_idx = browser.selected;
+    } else if browser.selected >= start_idx + scroll_height {
+        start_idx = browser
+            .selected
+            .saturating_sub(scroll_height.saturating_sub(1));
+    }
+    let end_idx = (start_idx + scroll_height).min(browser.entries.len());
 
     for idx in start_idx..end_idx {
         let entry = &browser.entries[idx];
@@ -911,9 +919,10 @@ fn render_file_browser(
 
     // Show hint at bottom
     lines.push(Line::from(""));
+    let filter_hint = if browser.show_all_files { "a:Filter" } else { "a:All" };
     let nav_hint = format!(
-        " {}/{}:Navigate  Enter:Select  Backspace:Parent  Esc:Quit",
-        glyphs.arrow_up, glyphs.arrow_down
+        " {}/{}:Navigate  Enter:Select  Backspace:Parent  {}  Esc:Quit",
+        glyphs.arrow_up, glyphs.arrow_down, filter_hint
     );
     lines.push(Line::from(Span::styled(
         nav_hint,

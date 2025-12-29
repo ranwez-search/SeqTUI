@@ -401,6 +401,23 @@ pub fn run_app_with_file_browser(fancy_ui: bool) -> Result<()> {
     app.run()
 }
 
+/// Convenience function to run the application with the file browser open in a given directory.
+pub fn run_app_with_file_browser_at(start_dir: PathBuf, fancy_ui: bool) -> Result<()> {
+    use crate::model::{Alignment, FileBrowserState};
+
+    let start_dir = if start_dir.is_dir() {
+        start_dir
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    };
+    let mut state = AppState::new(Alignment::new(vec![]), "No file".to_string());
+    state.fancy_ui = fancy_ui;
+    state.file_browser = Some(FileBrowserState::new(start_dir, "Select a sequence file".to_string()));
+
+    let mut app = App::new(state)?;
+    app.run()
+}
+
 /// Convenience function to run the application with background loading.
 /// Optional `preset_translation` is (genetic_code_id, reading_frame) to preset translation settings.
 pub fn run_app_with_loading(
