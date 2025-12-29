@@ -4,21 +4,35 @@ A fast terminal-based viewer and command-line toolkit for sequences. View, trans
 
 Written in Rust using [ratatui](https://ratatui.rs/).
 
+**Author:** [Vincent Ranwez](https://github.com/ranwez)
+
 <p align="center">
-  <img src="docs/screenshot-help-translation.jpg" alt="SeqTUI help and translation view" width="700">
+  <img src="docs/screenshot-help-translation.jpg"
+       alt="SeqTUI help and translation view"
+       width="80%">
 </p>
 
 ## Features
 
 - 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
-- 🎨 **Color Coded**: Nucleotides and amino acids displayed with distinct background colors
-- 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handles ambiguity codes (R, Y, N)
+- 🎨 **Color-Coded**: Nucleotides and amino acids displayed with distinct background colors
+- 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handling ambiguity codes (R, Y, N)
 - 🧩 **Concatenation & Supermatrix**: Combine multiple alignments, fill missing with gaps
 - 🧬 **SNP Extraction**: Export isolated biallelic SNPs to VCF with flanking distance filter
 - 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling
 - ⌨️ **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
 - 🔧 **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
-- 🚀 **Large File Support**: Tested on 500MB+ alignments
+- 🚀 **Large File Support**: Tested on alignments larger than 500 MB 
+
+## Quick start
+
+```bash
+# View an alignment interactively
+seqtui LOC_01790.nex
+
+# Translate to amino acids
+seqtui alignment.fasta -t -o out_AA.fasta
+```
 
 ## Download binary releases or build from source
 
@@ -28,19 +42,18 @@ https://github.com/ranwez-search/SeqTUI/releases
 **macOS note:** on first launch, macOS may block the application. In this case, allow it via  
 *System Settings → Privacy & Security*, then run it again.
 
-**terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). By default, SeqTUI uses an ASCII-safe interface for maximum compatibility. Optional fancy Unicode glyphs can be enabled using the `--fancy` option. While Unicode glyphs provide a nicer visual rendering, they may cause display issues on some terminal configurations, especially on Windows.
+**terminal requirements:** SeqTUI requires a terminal that supports ANSI colors and cursor movement (most modern terminals do). By default, SeqTUI uses an ASCII-safe interface for maximum compatibility. Optional Unicode glyphs can be enabled using the `--fancy` option. While Unicode glyphs provide a nicer visual rendering, they may cause display issues on some terminal configurations, especially on Windows.
 
-Alternatively, SeqTUI can be built from source using [Rust and Cargo](https://rust-lang.org/tools/install/):
+SeqTUI has been tested on macOS using [WezTerm](https://wezterm.org), including remote use over SSH to Linux systems, and on Windows 11 using [Windows Terminal](https://learn.microsoft.com/windows/terminal/).
+
+Alternatively, SeqTUI can be built from source. First install Rust and Cargo by following the official instructions at  
+https://www.rust-lang.org/tools/install
+
+Then clone the repository and build SeqTUI locally:
 
 ```bash
-# Install Rust and Cargo if not already installed
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Clone the repository
 git clone https://github.com/ranwez-search/SeqTUI.git
 cd SeqTUI
-
-# Build and install
 cargo install --path .
 ```
 
@@ -127,7 +140,7 @@ seqtui gene*.fasta -f 1,2 -d "_" -s -o supermatrix.fasta
 
 ### SNP Extraction (VCF Export)
 
-Extract isolated biallelic SNPs from alignments with a minimum flanking monomorphic distance filter:
+Extract isolated biallelic SNPs from alignments using a minimum flanking monomorphic distance filter:
 
 ```bash
 # Extract SNPs with at least 300 monomorphic sites on each side
@@ -273,7 +286,7 @@ Use `:w filename.fasta` to save the current view:
 
 ## Architecture
 
-The application follows an event-driven MVC architecture:
+The application follows an event-driven MVC architecture. The internal architecture is shown below for developers interested in extending or modifying SeqTUI:
 
 ```
 src/
@@ -294,7 +307,7 @@ src/
 ## Development
 
 ```bash
-# Run tests (82 tests covering all formats and VCF export)
+# Run tests (96 tests covering all formats and SNP extraction functionality)
 cargo test
 
 # Run with test data
@@ -314,7 +327,8 @@ cargo build --release --target x86_64-unknown-linux-gnu
 
 ## Note
 
-⚠️ This is a side project developed with extensive use of AI assistants (GitHub Copilot and Claude Opus 4.5). It was my first "vibe coding" experiment. While functional, please use with appropriate caution and feel free to report any issues.
+⚠️ This is a side project developed with extensive use of AI assistants (Claude Opus 4.5 via GitHub Copilot) as a first “vibe coding” experiment.
+SeqTUI has been thoroughly tested on real data with a strong focus on functionality and user experience. Please report any issues or suggestions.
 
 ## Related Projects & Inspiration
 
@@ -326,6 +340,8 @@ SeqTUI was inspired by several great tools:
 - **[Awesome ratatui](https://github.com/ratatui/awesome-ratatui)** - Inspiration from the ecosystem, especially:
   - [termscp](https://github.com/veeso/termscp) - Terminal file transfer
   - [tgv](https://github.com/chroma-pipeline/tgv) - Terminal genome viewer
+
+SeqTUI handles frameshifts consistently with [MACSE](https://github.com/ranwez/MACSE_V2_PIPELINES)
 
 Alternatives to SeqTUI include:
 - **[termal](https://github.com/sib-swiss/termal)** - a terminal alignment viewer with conservation scores 

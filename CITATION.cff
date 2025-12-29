@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use SeqTUI in your research, please cite the associated paper."
+title: "SeqTUI: A Terminal-Based Sequence Viewer and Command-Line Toolkit"
+authors:
+  - family-names: Ranwez
+    given-names: Vincent
+    orcid: "https://orcid.org/0000-0002-9308-7541"
+version: 0.1.0
+date-released: 2025-12-29
+url: "https://github.com/ranwez-search/SeqTUI"
+license: MIT
+
+preferred-citation:
+  type: manuscript
+  title: "AI-Assisted Vibe Coding Lowers the Barrier to Scientific Tool Development: General Guidelines Illustrated by SeqTUI"
+  authors:
+    - family-names: Ranwez
+      given-names: Vincent
+      orcid: "https://orcid.org/0000-0002-9308-7541"
+  year: 2025
+  status: "submitted"
