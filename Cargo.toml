@@ -6,6 +6,9 @@ authors = ["V. Ranwez"]
 description = "A fast terminal-based viewer and toolkit for sequences. View, translate, convert, and concatenate — aligned or not."
 license = "MIT"
 readme = "README.md"
+keywords = ["tui", "bioinformatics", "sequence", "cli"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/ranwez-search/SeqTUI/"
 
 [dependencies]
 # TUI framework
