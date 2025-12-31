@@ -342,7 +342,7 @@ SeqTUI has been thoroughly tested on real data with a strong focus on functional
 
 SeqTUI was inspired by several great tools:
 
-- **[Seaview](https://doua.prabi.fr/software/seaview)** - The reference GUI alignment viewer. I'm a huge fan and it has many more features. SeqTUI was born from needing a quick alignment view when working on HPC clusters via terminal.
+- **[Seaview](https://doua.prabi.fr/software/seaview)** - Multiplatform GUI for molecular phylogeny. I'm a huge fan and it has many more features. SeqTUI was born from needing a quick alignment view when working on HPC clusters via terminal.
 - **[Vim](https://www.vim.org/)** - The navigation philosophy and keybindings
 - **[ratatui](https://ratatui.rs/)** - The excellent Rust TUI framework powering this app
 - **[Awesome ratatui](https://github.com/ratatui/awesome-ratatui)** - Inspiration from the ecosystem, especially:
