@@ -33,6 +33,7 @@ seqtui LOC_01790.nex
 # Translate to amino acids
 seqtui alignment.fasta -t -o out_AA.fasta
 ```
+If you find SeqTUI useful, please consider starring the repository.
 
 ## Installation
 
@@ -335,7 +336,7 @@ cargo build --release --target x86_64-unknown-linux-gnu
 
 ## Note
 
-⚠️ This is a side project developed with extensive use of AI assistants (Claude Opus 4.5 via GitHub Copilot) as a first “vibe coding” experiment.
+⚠️ This is a side project developed with use of AI assistants (Claude Opus 4.5 via GitHub Copilot).
 SeqTUI has been thoroughly tested on real data with a strong focus on functionality and user experience. Please report any issues or suggestions.
 
 ## Related Projects & Inspiration
