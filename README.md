@@ -24,6 +24,11 @@ Written in Rust [![Built With Ratatui](https://ratatui.rs/built-with-ratatui/bad
 - 🔧 **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
 - 🚀 **Large File Support**: Tested on alignments larger than 500 MB 
 
+[![Release (SeqTUI)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml/badge.svg)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml)
+[![crates.io](https://img.shields.io/crates/v/seqtui.svg)](https://crates.io/crates/seqtui)
+[![downloads](https://img.shields.io/crates/d/seqtui.svg)](https://crates.io/crates/seqtui)
+[![license](https://img.shields.io/github/license/ranwez-search/SeqTUI.svg)](https://github.com/ranwez-search/SeqTUI/blob/main/LICENSE)
+
 ## Quick start
 
 ```bash
