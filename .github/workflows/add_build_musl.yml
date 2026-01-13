@@ -1,0 +1,56 @@
+name: Add MUSL Linux asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to attach the asset to (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build_musl:
+    name: Linux (x86_64, MUSL static)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build (MUSL)
+        run: |
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="target/x86_64-unknown-linux-musl/release/seqtui"
+          ARCHIVE="seqtui-${{ inputs.tag }}-linux-x86_64-musl"
+          mkdir -p dist/"$ARCHIVE"
+          cp "$BIN" dist/"$ARCHIVE"/
+          tar -C dist -czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
+
+      - name: Upload asset to existing GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            seqtui-${{ inputs.tag }}-linux-x86_64-musl.tar.gz
+          overwrite_files: false
