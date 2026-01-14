@@ -10,10 +10,10 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: ${{ matrix.platform.label }}
+  build:
+    name: Build ${{ matrix.platform.label }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform:
           # Linux (x86_64)
@@ -59,15 +59,87 @@ jobs:
           args: "--locked --release"
           strip: true
 
-      - name: Publish artifacts and (on v* tags) GitHub Release
-        uses: houseabsolute/actions-rust-release@v0
+      - name: Create archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          
+          BIN_NAME="seqtui"
+          ARCHIVE_NAME="${{ matrix.platform.archive }}"
+          
+          # Create temporary directory for archive contents
+          mkdir -p "${ARCHIVE_NAME}"
+          
+          # Copy binary
+          cp "target/${{ matrix.platform.target }}/release/${BIN_NAME}" "${ARCHIVE_NAME}/"
+          
+          # Copy example files
+          mkdir -p "${ARCHIVE_NAME}/examples"
+          cp examples/LOC_01790.nex "${ARCHIVE_NAME}/examples/"
+          cp examples/LOC_11070.fasta "${ARCHIVE_NAME}/examples/"
+          cp examples/LOC_39310.fasta "${ARCHIVE_NAME}/examples/"
+          cp examples/alignment.fasta "${ARCHIVE_NAME}/examples/"
+          
+          # Create archive
+          tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+          echo "ASSET=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $BIN_NAME = "seqtui.exe"
+          $ARCHIVE_NAME = "${{ matrix.platform.archive }}"
+          $TARGET = "${{ matrix.platform.target }}"
+          
+          # Create temporary directory for archive contents
+          New-Item -ItemType Directory -Path "$ARCHIVE_NAME" -Force | Out-Null
+          
+          # Copy binary
+          $binPath = Join-Path "target" $TARGET "release" $BIN_NAME
+          Copy-Item $binPath "$ARCHIVE_NAME\"
+          
+          # Copy example files
+          New-Item -ItemType Directory -Path "$ARCHIVE_NAME\examples" -Force | Out-Null
+          Copy-Item "examples\LOC_01790.nex" "$ARCHIVE_NAME\examples\"
+          Copy-Item "examples\LOC_11070.fasta" "$ARCHIVE_NAME\examples\"
+          Copy-Item "examples\LOC_39310.fasta" "$ARCHIVE_NAME\examples\"
+          Copy-Item "examples\alignment.fasta" "$ARCHIVE_NAME\examples\"
+          
+          # Create archive
+          Compress-Archive -Path "$ARCHIVE_NAME" -DestinationPath "$ARCHIVE_NAME.zip"
+          echo "ASSET=$ARCHIVE_NAME.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          executable-name: seqtui
-          target: ${{ matrix.platform.target }}
-          archive-name: ${{ matrix.platform.archive }}
-          extra-files: |
-            examples/LOC_01790.nex
-            examples/LOC_11070.fasta
-            examples/LOC_39310.fasta
-            examples/alignment.fasta
-          changes-file: ""
+          name: ${{ matrix.platform.archive }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
