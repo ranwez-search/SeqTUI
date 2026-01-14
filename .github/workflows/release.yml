@@ -22,6 +22,12 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: seqtui-${{ github.ref_name }}-linux-x86_64
 
+          # Linux (x86_64 - musl, static)
+          - label: Linux (x86_64 - musl)
+            runs-on: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            archive: seqtui-${{ github.ref_name }}-linux-x86_64-musl
+
           # macOS (Apple Silicon)
           - label: macOS (Apple Silicon)
             runs-on: macos-15
@@ -61,5 +67,7 @@ jobs:
           archive-name: ${{ matrix.platform.archive }}
           extra-files: |
             examples/LOC_01790.nex
+            examples/LOC_11070.fasta
+            examples/LOC_39310.fasta
             examples/alignment.fasta
           changes-file: ""
