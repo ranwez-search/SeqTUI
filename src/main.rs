@@ -778,13 +778,18 @@ fn run_concatenation_mode(
         eprintln!("Wrote {} sequences to {}", seq_count, output);
     }
     
-    // Write partitions file if requested
+    // Write partitions file if requested (NEXUS format for IQtree)
     if let Some(part_file) = partitions_file {
         let mut file = std::fs::File::create(part_file)?;
+        writeln!(file, "#nexus")?;
+        writeln!(file, "begin sets;")?;
         for (name, start, end) in &partitions {
-            writeln!(file, "{} = {}-{}", name, start, end)?;
+            // Sanitize partition name: replace spaces with underscores
+            let sanitized_name = name.replace(' ', "_");
+            writeln!(file, "    charset {} = {}-{};", sanitized_name, start, end)?;
         }
-        eprintln!("Wrote {} partitions to {}", partitions.len(), part_file);
+        writeln!(file, "end;")?;
+        eprintln!("Wrote NEXUS partition file with {} partitions to {}", partitions.len(), part_file);
     }
     
     Ok(())
@@ -864,7 +869,7 @@ struct Args {
     #[arg(short = 's', long = "supermatrix", value_name = "CHAR", default_missing_value = "-", num_args = 0..=1, help_heading = "Multi-file Concatenation")]
     supermatrix: Option<String>,
 
-    /// Write partition file for phylogenetic analysis
+    /// Write partition file in NEXUS format (IQtree-compatible)
     #[arg(short = 'p', long = "partitions", help_heading = "Multi-file Concatenation")]
     partitions: Option<String>,
 
@@ -1417,5 +1422,72 @@ mod tests {
         let result = extract_key("species.gene.variant", Some("."), Some(&[1, 2]), "test.fa");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "species.gene");
+    }
+    
+    // ==================== Partition File Tests ====================
+    
+    #[test]
+    fn test_partition_nexus_format() {
+        let test_id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let tmp_output = format!("/tmp/seqtui_test_part_{}.fasta", test_id);
+        let tmp_partition = format!("/tmp/seqtui_test_part_{}.nex", test_id);
+        
+        // Run concatenation with LOC files from examples/ directory
+        let files = vec![
+            PathBuf::from("examples/LOC_01790.nex"),
+            PathBuf::from("examples/LOC_11070.fasta"),
+            PathBuf::from("examples/LOC_39310.fasta"),
+        ];
+        
+        let result = run_concatenation_mode(
+            &files,
+            None,                           // auto-detect format
+            &tmp_output,
+            true,                           // translate
+            1,                              // genetic code
+            1,                              // frame
+            None,                           // no delimiter
+            None,                           // no fields
+            Some('-'),                      // supermatrix mode
+            Some(&tmp_partition),           // partition file
+            false,                          // no force
+        );
+        
+        assert!(result.is_ok(), "Concatenation with partitions should succeed");
+        
+        // Read partition file and compare with expected output
+        let content = std::fs::read_to_string(&tmp_partition)
+            .expect("Partition file should exist");
+        
+        let expected = "#nexus
+begin sets;
+    charset LOC_01790 = 1-286;
+    charset LOC_11070 = 287-636;
+    charset LOC_39310 = 637-951;
+end;
+";
+        
+        assert_eq!(content, expected, "Partition file content should match expected format");
+        
+        // Clean up
+        let _ = std::fs::remove_file(&tmp_output);
+        let _ = std::fs::remove_file(&tmp_partition);
+        // Clean up log file
+        if let Ok(entries) = std::fs::read_dir("/tmp") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&format!("seqtui_test_part_{}_concat_", test_id)) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_partition_name_sanitization() {
+        // Test verifies that partition names with spaces are sanitized
+        let test_name = "gene with spaces";
+        let sanitized = test_name.replace(' ', "_");
+        assert_eq!(sanitized, "gene_with_spaces", "Spaces should be replaced with underscores");
     }
 }

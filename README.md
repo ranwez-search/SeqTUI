@@ -132,12 +132,20 @@ seqtui gene1.fasta gene2.phy gene3.nex -o concatenated.fasta
 # Supermatrix: fill missing sequences with gaps
 seqtui gene*.fasta -s -o supermatrix.fasta
 
-# With partition file for phylogenetic analysis
-seqtui gene*.fasta -s -p partitions.txt -o supermatrix.fasta
-# Creates: partitions.txt with "gene1 = 1-500", "gene2 = 501-1200", etc.
-
 # Translate all genes and build AA supermatrix
 seqtui gene*.fasta -s -t -o supermatrix_AA.fasta
+
+# With partition file for phylogenetic analysis
+seqtui examples/LOC* -s -t -p partitions.nex -o supermatrix.fasta
+# Creates NEXUS partition file compatible with IQtree:
+#   #nexus
+#   begin sets;
+#       charset LOC_01790 = 1-286;
+#       charset LOC_11070 = 287-636;
+#       charset LOC_39310 = 637-951;
+#   end;
+
+
 ```
 
 **Sequence ID matching with delimiter** — when sequence names have prefixes/suffixes:
@@ -185,7 +193,7 @@ seqtui gene*.fasta -v 100 -d "_" -o snps.vcf
 | `-d` | `--delimiter` | Delimiter for splitting sequence IDs (default: `_` when -f is used) |
 | `-f` | `--fields` | Fields to keep from IDs (1-based, comma-separated). Ex: `-f 1,2` |
 | `-s` | `--supermatrix` | Fill missing sequences with a character (default: `-`) |
-| `-p` | `--partitions` | Write partition file for phylogenetic analysis |
+| `-p` | `--partitions` | Write partition file in NEXUS format (IQtree-compatible) |
 | `-t` | `--translate` | Translate nucleotides to amino acids |
 | `-g` | `--genetic-code` | Genetic code (1-33, default: 1 = Standard) |
 | `-r` | `--reading-frame` | Reading frame (1-3, default: 1) |
