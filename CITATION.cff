@@ -12,10 +12,10 @@ license: MIT
 
 preferred-citation:
   type: manuscript
-  title: "AI-Assisted Vibe Coding Lowers the Barrier to Scientific Tool Development: General Guidelines Illustrated by SeqTUI"
+  title: "SeqTUI: A terminal-based viewer and command-line toolkit for molecular sequences"
   authors:
     - family-names: Ranwez
       given-names: Vincent
       orcid: "https://orcid.org/0000-0002-9308-7541"
-  year: 2025
+  year: 2026
   status: "submitted"
