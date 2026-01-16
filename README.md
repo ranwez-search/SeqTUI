@@ -14,15 +14,15 @@ Written in Rust [![Built With Ratatui](https://ratatui.rs/built-with-ratatui/bad
 
 ## Features
 
-- 🧬 **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
-- 🎨 **Color-Coded**: Nucleotides and amino acids displayed with distinct background colors
-- 🔄 **NT → AA Translation**: 33 NCBI genetic codes, handling ambiguity codes (R, Y, N)
-- 🧩 **Concatenation & Supermatrix**: Combine multiple alignments, fill missing with gaps
-- 🧬 **SNP Extraction**: Export isolated biallelic SNPs to VCF with flanking distance filter
-- 📜 **Sticky Names**: Sequence identifiers remain visible while scrolling
-- ⌨️ **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
-- 🔧 **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
-- 🚀 **Large File Support**: Tested on alignments larger than 500 MB 
+- **Multi-Format Support**: FASTA, PHYLIP, and NEXUS formats with auto-detection
+- **Color-Coded**: Nucleotides and amino acids displayed with distinct background colors
+- **NT → AA Translation**: 33 NCBI genetic codes, handling ambiguity codes (R, Y, N)
+- **Concatenation & Supermatrix**: Combine multiple alignments, fill missing with gaps
+- **SNP Extraction**: Export isolated biallelic SNPs to VCF with flanking distance filter
+- **Sticky Names**: Sequence identifiers remain visible while scrolling
+- **Vim-style Navigation**: h/j/k/l, w/b/e, Ctrl+U/D, search with `/` and `?`
+- **Command-Line Mode**: Batch convert, translate, combine — pipe-friendly output
+- **Large File Support**: Tested on alignments larger than 500 MB 
 
 [![Release (SeqTUI)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml/badge.svg)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml)
 [![crates.io](https://img.shields.io/crates/v/seqtui.svg)](https://crates.io/crates/seqtui)
