@@ -1,7 +1,6 @@
 name: Release (SeqTUI)
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -10,7 +9,32 @@ permissions:
   contents: write
 
 jobs:
+  check_version:
+    name: Check tag matches Cargo.toml version
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare tag and Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+
+          CARGO_VER="$(
+            awk -F'"' '
+              /^\[package\]/ {inpkg=1; next}
+              /^\[/ {if(inpkg) exit}
+              inpkg && $1 ~ /^version[[:space:]]*=/ {print $2; exit}
+            ' Cargo.toml
+          )"
+
+          echo "Tag version: $TAG"
+          echo "Cargo.toml:  $CARGO_VER"
+          test "$TAG" = "$CARGO_VER"
   build:
+    needs: check_version
     name: Build ${{ matrix.platform.label }}
     strategy:
       fail-fast: true
