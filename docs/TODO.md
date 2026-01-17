@@ -1,4 +1,4 @@
-# add search PCRE like
+# add search PCRE like ?
 - \E : stop interne (* avec au moins un non-gap à droite)
 - \e : stop terminal (* au dernier résidu non-gap ; peut être suivi de -)
 - \F : frameshift interne (! interne)
