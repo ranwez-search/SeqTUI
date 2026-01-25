@@ -25,6 +25,7 @@ Written in Rust [![Built With Ratatui](https://ratatui.rs/built-with-ratatui/bad
 - **Large File Support**: Tested on alignments larger than 500 MB 
 
 [![Release (SeqTUI)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml/badge.svg)](https://github.com/ranwez-search/SeqTUI/actions/workflows/release.yml)
+[![bioconda version](https://img.shields.io/conda/vn/bioconda/seqtui?label=bioconda)](https://anaconda.org/bioconda/seqtui)
 [![crates.io](https://img.shields.io/crates/v/seqtui.svg)](https://crates.io/crates/seqtui)
 [![downloads](https://img.shields.io/crates/d/seqtui.svg)](https://crates.io/crates/seqtui)
 [![license](https://img.shields.io/github/license/ranwez-search/SeqTUI.svg)](https://github.com/ranwez-search/SeqTUI/blob/main/LICENSE)
