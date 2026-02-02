@@ -30,7 +30,7 @@ Written in Rust [![Built With Ratatui](https://ratatui.rs/built-with-ratatui/bad
 [![license](https://img.shields.io/github/license/ranwez-search/SeqTUI.svg)](https://github.com/ranwez-search/SeqTUI/blob/main/LICENSE)
 [![Crates.io downloads](https://img.shields.io/crates/d/seqtui?label=crates.io%20downloads)](https://crates.io/crates/seqtui)
 ![GitHub Release downloads](https://img.shields.io/github/downloads/ranwez-search/SeqTUI/total?label=GitHub%20release%20downloads)
-
+[![Bioconda downloads](https://img.shields.io/conda/d/bioconda/seqtui.svg)](https://anaconda.org/bioconda/seqtui)
 
 ## Quick start
 
