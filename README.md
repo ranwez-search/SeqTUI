@@ -376,3 +376,22 @@ Alternatives to SeqTUI include:
 
 ## License
 MIT
+
+## Citation
+
+If you use **SeqTUI** in your research, please cite:
+
+> Ranwez, V. (2026). *SeqTUI: A terminal-based viewer and command-line toolkit for molecular sequences*. SoftwareX, 34, 102587. https://doi.org/10.1016/j.softx.2026.102587
+
+### BibTeX
+
+```bibtex
+@article{ranwez2026seqtui,
+  author  = {Ranwez, Vincent},
+  title   = {SeqTUI: A terminal-based viewer and command-line toolkit for molecular sequences},
+  journal = {SoftwareX},
+  volume  = {34},
+  pages   = {102587},
+  year    = {2026},
+  doi     = {10.1016/j.softx.2026.102587}
+}
