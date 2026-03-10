@@ -5,17 +5,22 @@ authors:
   - family-names: Ranwez
     given-names: Vincent
     orcid: "https://orcid.org/0000-0002-9308-7541"
-version: 0.1.0
+version: 0.1.1
 date-released: 2025-12-29
 url: "https://github.com/ranwez-search/SeqTUI"
 license: MIT
 
 preferred-citation:
-  type: manuscript
+  type: article
   title: "SeqTUI: A terminal-based viewer and command-line toolkit for molecular sequences"
   authors:
     - family-names: Ranwez
       given-names: Vincent
       orcid: "https://orcid.org/0000-0002-9308-7541"
+  journal: "SoftwareX"
   year: 2026
-  status: "submitted"
+  volume: 34
+  article-number: 102587
+  doi: "10.1016/j.softx.2026.102587"
+  url: "https://www.sciencedirect.com/science/article/pii/S2352711026000816"
+  publisher: "Elsevier"
